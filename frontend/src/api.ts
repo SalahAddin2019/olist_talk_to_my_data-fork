@@ -1,7 +1,7 @@
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
-    signal: init?.signal ?? AbortSignal.timeout(90000),
+    signal: init?.signal ?? AbortSignal.timeout(180000),
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {

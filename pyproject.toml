@@ -1,20 +1,20 @@
 [project]
 name = "olist-warehouse-agent"
 version = "0.1.0"
-description = "A small, grounded analytics agent for the Olist Azure PostgreSQL warehouse"
+description = "Chat UI and API that route Olist questions to a Microsoft Foundry agent"
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "fastapi>=0.115,<1",
   "uvicorn>=0.34,<1",
-  "openai>=1.68,<3",
   "pydantic-settings>=2.8,<3",
-  "psycopg[binary,pool]>=3.2,<4",
-  "httpx>=0.28,<1",
+  "azure-ai-projects>=2.7,<3",
+  "azure-identity>=1.25,<2",
+  "aiohttp>=3.10,<4",
+  "openai>=3,<4",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3,<10", "ruff>=0.11,<1"]
-azure = ["azure-identity>=1.21,<2", "azure-monitor-opentelemetry>=1.6,<2"]
+dev = ["pytest>=8.3,<10", "ruff>=0.11,<1", "httpx>=0.28,<1"]
 
 [build-system]
 requires = ["hatchling"]

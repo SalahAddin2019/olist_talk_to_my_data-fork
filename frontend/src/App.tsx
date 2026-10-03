@@ -4,19 +4,20 @@ import {
   ArrowRight,
   ArrowUp,
   BarChart3,
+  Bot,
   ChevronRight,
-  CircleHelp,
   Database,
   Layers3,
   LoaderCircle,
   Plus,
   ShieldCheck,
   Sparkles,
-  X,
 } from 'lucide-react';
 import { request } from './api';
-import Result from './Result';
-import type { Answer, Turn, WarehouseInfo } from './types';
+import Answer from './Answer';
+import type { Answer as ChatAnswer, Health, Message, Turn } from './types';
+
+const MAX_PRIOR_TURNS = 9;
 
 const suggestions = [
   { tag: 'PERFORMANCE', question: 'What is our total revenue and order count?', icon: BarChart3 },
@@ -26,28 +27,27 @@ const suggestions = [
 ];
 
 export default function App() {
-  const [warehouse, setWarehouse] = useState<WarehouseInfo | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
   const [connectionError, setConnectionError] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [showInfo, setShowInfo] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const activeRef = useRef(false);
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    if (showInfo) dialogRef.current?.showModal();
-    else dialogRef.current?.close();
-  }, [showInfo]);
-
   useEffect(() => {
     const controller = new AbortController();
     setConnectionError('');
-    request<WarehouseInfo>('/api/warehouse', { signal: controller.signal })
-      .then(setWarehouse)
+    request<Health>('/api/health', { signal: controller.signal })
+      .then((result) => {
+        setHealth(result);
+        if (!result.configured)
+          setConnectionError(
+            'The backend is not connected to Microsoft Foundry. Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_AGENT_NAME, then restart it.',
+          );
+      })
       .catch((error) => {
         if (!controller.signal.aborted) setConnectionError(error.message);
       });
@@ -63,23 +63,28 @@ export default function App() {
     if (!question || activeRef.current) return;
     activeRef.current = true;
     const id = crypto.randomUUID();
-    const history = turns
-      .filter((turn) => turn.result)
-      .slice(-6)
-      .map((turn) => ({ question: turn.question, plan: turn.result!.plan }));
+    // The browser owns the conversation; the backend accepts at most 20 messages.
+    const messages: Message[] = turns
+      .filter((turn) => turn.answer)
+      .slice(-MAX_PRIOR_TURNS)
+      .flatMap((turn): Message[] => [
+        { role: 'user', content: turn.question },
+        { role: 'assistant', content: turn.answer! },
+      ]);
+    messages.push({ role: 'user', content: question });
     const controller = new AbortController();
     controllerRef.current = controller;
     setTurns((previous) => [...previous, { id, question }]);
     setInput('');
     setBusy(true);
     try {
-      const result = await request<Answer>('/api/chat', {
+      const { answer } = await request<ChatAnswer>('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, history }),
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90000)]),
+        body: JSON.stringify({ messages }),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(180000)]),
       });
-      setTurns((previous) => previous.map((turn) => (turn.id === id ? { ...turn, result } : turn)));
+      setTurns((previous) => previous.map((turn) => (turn.id === id ? { ...turn, answer } : turn)));
     } catch (error) {
       setTurns((previous) =>
         previous.map((turn) =>
@@ -125,23 +130,20 @@ export default function App() {
           <Plus aria-hidden="true" size={17} /> New conversation <span>↗</span>
         </button>
         <div className="nav-label">WORKSPACE</div>
-        <button className="nav-item active" onClick={() => setShowInfo(false)}>
+        <span className="nav-item active">
           <Sparkles aria-hidden="true" size={17} /> Ask your data{' '}
           <ChevronRight aria-hidden="true" size={14} />
-        </button>
-        <button className="nav-item" onClick={() => setShowInfo(true)}>
-          <Database aria-hidden="true" size={17} /> Warehouse guide
-        </button>
+        </span>
         <div className="sidebar-spacer" />
         <div className="source-card">
           <div className="source-icon">
-            <Database aria-hidden="true" size={18} />
+            <Bot aria-hidden="true" size={18} />
           </div>
           <div>
-            <strong>Olist warehouse</strong>
-            <span>Azure PostgreSQL</span>
+            <strong>{health?.agent ?? 'Foundry agent'}</strong>
+            <span>Microsoft Foundry</span>
           </div>
-          <span className={`status-dot ${warehouse && !connectionError ? '' : 'offline'}`} />
+          <span className={`status-dot ${health?.configured ? '' : 'offline'}`} />
         </div>
         <div className="sidebar-bottom">
           <span className="avatar">A</span>
@@ -159,73 +161,25 @@ export default function App() {
             Workspace <ChevronRight aria-hidden="true" size={13} />
             <strong>Ask your data</strong>
           </div>
-          <button className="model-badge" onClick={() => setShowInfo(true)}>
-            <span className="purple-dot" /> GPT-4.1 nano{' '}
-            <ChevronRight aria-hidden="true" size={12} />
-          </button>
+          <span className="model-badge">
+            <span className="purple-dot" /> Microsoft Foundry
+          </span>
         </header>
         <div className="main-body">
           <div className="page-heading">
             <div>
               <div className="eyebrow">YOUR ANALYTICS, IN CONVERSATION</div>
               <h1>Talk to your data.</h1>
-              <p>Ask a question. Get an answer grounded in your warehouse.</p>
+              <p>Ask a question. Your Microsoft Foundry agent answers from the Olist data.</p>
             </div>
-            <span className="read-only">
-              <ShieldCheck aria-hidden="true" size={14} /> Read-only access
-            </span>
           </div>
-          <section className="warehouse-strip" aria-label="Warehouse connection">
-            <div className="warehouse-strip-title">
-              <span className="database-icon">
-                <Database aria-hidden="true" size={18} />
-              </span>
-              <div>
-                <strong>Olist ecommerce</strong>
-                <span>
-                  <span
-                    className={`status-dot ${warehouse && !connectionError ? '' : 'offline'}`}
-                  />
-                  {connectionError
-                    ? 'Connection unavailable'
-                    : warehouse
-                      ? 'Warehouse connected'
-                      : 'Connecting to warehouse…'}
-                </span>
-              </div>
-            </div>
-            <div className="warehouse-stat">
-              <span>ORDER ITEMS</span>
-              <strong>{warehouse ? warehouse.items.toLocaleString('en-US') : '—'}</strong>
-            </div>
-            <div className="warehouse-stat">
-              <span>DATA COVERAGE</span>
-              <strong>
-                {warehouse?.first_date && warehouse.last_date
-                  ? `${warehouse.first_date.slice(0, 4)} – ${warehouse.last_date.slice(0, 4)}`
-                  : '—'}
-              </strong>
-            </div>
-            <div className="warehouse-stat">
-              <span>CURRENCY</span>
-              <strong>
-                BRL <span className="muted">R$</span>
-              </strong>
-            </div>
-          </section>
           {connectionError && (
             <div className="connection-error" role="alert">
               {connectionError}{' '}
-              <button onClick={() => setRefresh((value) => value + 1)}>Retry connection</button>
+              <button onClick={() => setRefresh((value) => value + 1)}>Check again</button>
             </div>
           )}
 
-          {warehouse?.quality_warnings?.map((warning) => (
-            <div className="quality-notice" key={warning} role="status">
-              <CircleHelp aria-hidden="true" size={15} />
-              <span>{warning}</span>
-            </div>
-          ))}
           <section
             className={`conversation ${turns.length ? 'has-turns' : ''}`}
             aria-label="Conversation"
@@ -259,8 +213,8 @@ export default function App() {
                   ))}
                 </div>
                 <div className="data-note">
-                  <Layers3 aria-hidden="true" size={13} /> One warehouse. Six dimensions. Clear
-                  answers.
+                  <Layers3 aria-hidden="true" size={13} /> Follow-up questions keep the conversation
+                  context.
                 </div>
               </div>
             ) : (
@@ -271,7 +225,7 @@ export default function App() {
                       <span className="you-label">YOU</span>
                       <p>{turn.question}</p>
                     </div>
-                    {turn.result && <Result result={turn.result} />}
+                    {turn.answer && <Answer text={turn.answer} />}
                     {turn.error && (
                       <div className="turn-error" role="alert">
                         <p>{turn.error}</p>
@@ -284,8 +238,8 @@ export default function App() {
                 ))}
                 {busy && (
                   <div className="thinking" role="status">
-                    <LoaderCircle aria-hidden="true" size={17} className="spin" /> Planning and
-                    querying your warehouse…
+                    <LoaderCircle aria-hidden="true" size={17} className="spin" /> Asking your
+                    Foundry agent…
                   </div>
                 )}
                 <div ref={endRef} />
@@ -301,7 +255,7 @@ export default function App() {
               }}
             >
               <label className="sr-only" htmlFor="question">
-                Ask a question about your warehouse
+                Ask a question about your Olist data
               </label>
               <textarea
                 ref={inputRef}
@@ -324,9 +278,11 @@ export default function App() {
               />
               <div className="composer-bottom">
                 <span>
-                  <Database aria-hidden="true" size={13} /> Olist warehouse{' '}
+                  <Database aria-hidden="true" size={13} /> Olist data{' '}
                   <span className="composer-divider">/</span>{' '}
-                  {turns.length ? 'Follow-up questions supported' : 'All available data'}
+                  {turns.length
+                    ? 'Follow-up questions supported'
+                    : 'Answered by your Foundry agent'}
                 </span>
                 <button
                   className="send-button"
@@ -344,7 +300,7 @@ export default function App() {
             </form>
             <div className="composer-caption">
               <span>
-                Answers include their SQL and metric definitions. Review before making decisions.
+                Answers are generated by an AI agent. Review them before making decisions.
               </span>
               <span>
                 Enter to send <ArrowDown aria-hidden="true" size={11} />
@@ -354,64 +310,11 @@ export default function App() {
         </div>
         <footer className="page-footer">
           <span>
-            <span className="status-dot" /> Built on your warehouse
+            <span className={`status-dot ${health?.configured ? '' : 'offline'}`} /> Powered by
+            Microsoft Foundry
           </span>
-          <button onClick={() => setShowInfo(true)}>
-            <CircleHelp aria-hidden="true" size={13} /> What can I ask?
-          </button>
         </footer>
       </main>
-      <dialog
-        ref={dialogRef}
-        className="guide-panel"
-        aria-labelledby="guide-title"
-        onCancel={() => setShowInfo(false)}
-        onClick={(event) => {
-          if (event.target === event.currentTarget) setShowInfo(false);
-        }}
-      >
-        <button
-          autoFocus
-          className="close-button"
-          aria-label="Close warehouse guide"
-          onClick={() => setShowInfo(false)}
-        >
-          <X aria-hidden="true" size={20} />
-        </button>
-        <span className="eyebrow">WAREHOUSE GUIDE</span>
-        <h2 id="guide-title">Know what you’re asking.</h2>
-        <p>
-          Explore merchandise revenue, order counts, items, freight, total item value, and average
-          order value.
-        </p>
-        <h3>Slice your data</h3>
-        <p>
-          Group by year, quarter, month, category, customer state, seller state, or order status.
-          Filter by dates, category, state, and status.
-        </p>
-        <h3>Metric definitions</h3>
-        <ul>
-          {(
-            warehouse?.definitions ?? [
-              'Revenue excludes freight. Amounts are in Brazilian reais.',
-              'Orders are counted distinctly within each group.',
-              'All statuses are included unless you ask for a filter.',
-            ]
-          ).map((text) => (
-            <li key={text}>{text}</li>
-          ))}
-        </ul>
-        <h3>Scope of this first version</h3>
-        <p>
-          Aggregate analytics only. Reviews, payments, profit, forecasts, and individual customer
-          records are outside this warehouse contract. Follow-up questions retain the last six
-          turns; a new conversation clears them.
-        </p>
-        <p className="guide-footnote">
-          Your question and category labels go to GPT-4.1 nano. Query result rows stay between the
-          warehouse, this backend, and your browser.
-        </p>
-      </dialog>
     </div>
   );
 }

@@ -1,227 +1,154 @@
-import json
 import logging
-import time
 from contextlib import asynccontextmanager
-from pathlib import Path
-from threading import BoundedSemaphore
+from typing import Annotated, Literal
 from uuid import uuid4
 
 import openai
-import psycopg
+from azure.core.exceptions import ClientAuthenticationError
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from psycopg_pool import PoolTimeout
-from pydantic import ValidationError
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from app.catalog import DEFINITIONS, DIMENSIONS, METRICS
 from app.config import ROOT, Settings
-from app.models import ChatRequest, ChatResponse
-from app.planner import Planner, PlannerError
-from app.service import AgentService
-from app.warehouse import Warehouse
+from app.foundry import FoundryAgent
 
-logger = logging.getLogger("warehouse.api")
+logger = logging.getLogger("olist.api")
 
 
-def create_app(settings: Settings | None = None, warehouse=None, planner=None) -> FastAPI:
+class Message(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=32000)
+
+
+def ends_with_question(messages: list[Message]) -> list[Message]:
+    if messages[-1].role != "user" or not messages[-1].content.strip():
+        raise ValueError("The last message must be a non-empty user question.")
+    return messages
+
+
+class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    messages: Annotated[
+        list[Message], Field(min_length=1, max_length=20), AfterValidator(ends_with_question)
+    ]
+
+
+class ChatResponse(BaseModel):
+    request_id: str
+    answer: str
+
+
+# Starlette picks the most specific handler, so APIError only catches what is left.
+ERRORS: list[tuple[tuple[type[Exception], ...], int, str]] = [
+    ((openai.RateLimitError,), 429, "The Foundry agent is rate limited. Try again shortly."),
+    ((openai.APITimeoutError,), 504, "The Foundry agent took too long to answer. Try again."),
+    (
+        (openai.AuthenticationError, openai.PermissionDeniedError, ClientAuthenticationError),
+        503,
+        "The backend could not authenticate to Microsoft Foundry. "
+        "Sign in with az login or check the identity's Azure AI User role.",
+    ),
+    ((openai.APIError,), 502, "The Foundry agent could not answer. Try again."),
+]
+
+
+def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
     settings = settings or Settings()
-    gate = BoundedSemaphore(settings.max_concurrent_requests)
 
     @asynccontextmanager
-    async def lifespan(app):
+    async def lifespan(app: FastAPI):
         logging.basicConfig(level=logging.INFO, format="%(message)s")
-        # Do not emit HTTP provider request URLs or payloads in normal logs.
-        logging.getLogger("httpx").setLevel(logging.WARNING)
-        logging.getLogger("httpcore").setLevel(logging.WARNING)
-        if settings.applicationinsights_connection_string.get_secret_value():
-            from azure.monitor.opentelemetry import configure_azure_monitor
-
-            configure_azure_monitor(
-                connection_string=settings.applicationinsights_connection_string.get_secret_value(),
-                instrumentation_options={"psycopg": {"enabled": False}},
-            )
-        app.state.service = None
-        if not any(key.startswith("PG") for key in settings.missing()):
-            db = warehouse or Warehouse(settings)
-            llm = planner or (Planner(settings) if not settings.missing() else None)
-            db.open()
-            app.state.service = AgentService(db, llm, settings.openai_model)
-            try:
-                yield
-            finally:
-                db.close()
-                if llm:
-                    llm.close()
-        else:
+        app.state.agent = agent or (FoundryAgent(settings) if settings.configured else None)
+        try:
             yield
+        finally:
+            if app.state.agent:
+                await app.state.agent.close()
 
     app = FastAPI(
-        title="Olist Warehouse Agent",
-        version="0.1.0",
+        title="Olist Foundry Chat",
         lifespan=lifespan,
-        docs_url="/api/docs" if settings.app_env == "local" else None,
+        docs_url="/api/docs",
         redoc_url=None,
         openapi_url="/api/openapi.json",
     )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type"],
-        expose_headers=["X-Request-ID"],
-    )
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
         request.state.request_id = uuid4().hex
-        started = time.perf_counter()
-        if settings.auth_mode == "azure_container_apps" and request.url.path != "/api/health":
-            # Only safe behind ACA built-in auth with unauthenticated requests rejected.
-            # ACA removes externally supplied identity headers. See docs/cloud.md.
-            if not request.headers.get("x-ms-client-principal-id"):
-                return JSONResponse(status_code=401, content={"error": "Sign in to continue."})
-        if request.method == "POST":
-            # Bounded streaming read, including requests without Content-Length.
-            size, chunks = 0, []
-            async for chunk in request.stream():
-                size += len(chunk)
-                if size > 32768:
-                    return JSONResponse(status_code=413, content={"error": "Request too large."})
-                chunks.append(chunk)
-            request._body = b"".join(chunks)
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Cache-Control"] = "no-store"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'"
-        )
-        if settings.app_env == "local" and request.url.path == "/api/docs":
+        if not request.url.path.startswith("/api/docs"):
             response.headers["Content-Security-Policy"] = (
-                "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                "img-src 'self' data: https://fastapi.tiangolo.com; "
-                "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'"
+                "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                "frame-ancestors 'none'; base-uri 'self'"
             )
-        logger.info(
-            json.dumps(
-                {
-                    "event": "http_request",
-                    "request_id": request.state.request_id,
-                    "method": request.method,
-                    "path": request.url.path,
-                    "status": response.status_code,
-                    "elapsed_ms": round((time.perf_counter() - started) * 1000),
-                }
-            )
-        )
         return response
 
-    @app.exception_handler(RequestValidationError)
-    async def validation_error(request, exc):
-        # FastAPI's default echoes invalid input, which may contain sensitive text.
+    def error(request: Request, status: int, message: str) -> JSONResponse:
         return JSONResponse(
-            status_code=422,
-            content={
-                "error": "Enter a question of 1–2,000 characters and at most six prior turns.",
-                "request_id": request.state.request_id,
-            },
+            status_code=status,
+            content={"error": message, "request_id": request.state.request_id},
         )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError):
+        # The default handler echoes the input back; questions may be sensitive.
+        return error(request, 422, "Send 1–20 messages of at most 32,000 characters each.")
 
     @app.exception_handler(HTTPException)
-    async def http_error(request, exc):
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={
-                "error": exc.detail,
-                "request_id": request.state.request_id,
-            },
-            headers=exc.headers,
-        )
+    async def http_error(request: Request, exc: HTTPException):
+        return error(request, exc.status_code, exc.detail)
 
-    def service(request):
-        if request.app.state.service is None:
-            raise HTTPException(503, "Backend setup is incomplete. Check the server environment.")
-        return request.app.state.service
+    for types, status, message in ERRORS:
 
-    def protected_call(function):
-        if not gate.acquire(blocking=False):
-            raise HTTPException(
-                429, "The agent is busy. Please try again shortly.", headers={"Retry-After": "3"}
+        async def handler(request: Request, exc: Exception, status=status, message=message):
+            logger.warning(
+                "foundry_error request_id=%s type=%s",
+                request.state.request_id,
+                type(exc).__name__,
             )
-        try:
-            return function()
-        except psycopg.errors.QueryCanceled as exc:
-            raise HTTPException(
-                504, "The warehouse query timed out. Try a narrower date range."
-            ) from exc
-        except (psycopg.Error, PoolTimeout) as exc:
-            raise HTTPException(
-                503, "Warehouse unavailable. Check connectivity and configuration."
-            ) from exc
-        except openai.RateLimitError as exc:
-            raise HTTPException(
-                429, "The model quota or rate limit was reached. Try again later."
-            ) from exc
-        except (openai.AuthenticationError, openai.PermissionDeniedError) as exc:
-            raise HTTPException(
-                503,
-                "The model service rejected the configured credentials. "
-                "Update the API key in the backend environment and restart the server.",
-            ) from exc
-        except (openai.APIError, PlannerError, ValidationError, ValueError) as exc:
-            raise HTTPException(
-                502, "The model could not plan this question. Try rephrasing it."
-            ) from exc
-        except OSError as exc:
-            raise HTTPException(
-                503, "The local audit log is unavailable. Check server permissions."
-            ) from exc
-        finally:
-            gate.release()
+            return error(request, status, message)
+
+        for exc_type in types:
+            app.add_exception_handler(exc_type, handler)
 
     @app.get("/api/health")
-    def health():
+    async def health():
         return {
             "status": "ok",
-            "configured": not settings.missing(),
-            "model": settings.openai_model,
-            "provider": settings.openai_provider,
-        }
-
-    @app.get("/api/warehouse")
-    def warehouse_info(request: Request):
-        info = protected_call(lambda: service(request).warehouse.metadata(request.state.request_id))
-        return {
-            **info,
-            "model": settings.openai_model,
-            "provider": settings.openai_provider,
-            "definitions": DEFINITIONS,
-            "metrics": [{"key": key, "label": value[1]} for key, value in METRICS.items()],
-            "dimensions": [{"key": key, "label": value[1]} for key, value in DIMENSIONS.items()],
+            "configured": settings.configured,
+            "agent": settings.foundry_agent_name or None,
         }
 
     @app.post("/api/chat", response_model=ChatResponse)
-    def chat(body: ChatRequest, request: Request):
-        agent = service(request)
-        if agent.planner is None:
+    async def chat(body: ChatRequest, request: Request):
+        if request.app.state.agent is None:
             raise HTTPException(
                 503,
-                "Model setup is incomplete. Add the provider API key "
-                "to the backend environment and restart the server.",
+                "Foundry is not configured. Set FOUNDRY_PROJECT_ENDPOINT and "
+                "FOUNDRY_AGENT_NAME in the backend environment and restart the server.",
             )
-        return protected_call(lambda: agent.ask(body, request.state.request_id))
+        answer = await request.app.state.agent.ask(
+            [message.model_dump() for message in body.messages]
+        )
+        if not answer.strip():
+            raise HTTPException(502, "The Foundry agent returned an empty answer. Try again.")
+        return ChatResponse(request_id=request.state.request_id, answer=answer)
 
     # One same-origin container in production, Vite proxy during local development.
     frontend = ROOT / "frontend/dist"
-    if Path(frontend).is_dir():
+    if frontend.is_dir():
         app.mount("/", StaticFiles(directory=frontend, html=True), name="frontend")
     return app
 

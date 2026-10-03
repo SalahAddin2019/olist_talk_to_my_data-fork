@@ -71,11 +71,19 @@ OpenRouter (`OPENROUTER_API_KEY`, model `openai/gpt-4.1-nano`) following the use
 credential clarification; direct OpenAI and Azure adapters remain available.
 The app compiles validated aggregate plans into parameterized,
 read-only PostgreSQL queries. The warehouse model and KNIME loading ownership remain unchanged.
-See [the engineering decision table](agent-decisions.md) for options, rationale,
-scaling paths, tradeoffs, weaknesses and official Azure/PostgreSQL sources.
 
 Live verification found all 112,650 `fact_order_item.category_key` values NULL and
 no product-to-category matches. Other fact dimension joins passed. This contradicts
 the older all-keys-present operational note. The app now checks category coverage
 and declines category questions until KNIME repairs the links; it does not invent
 a fallback or modify the warehouse. Revenue/state/time analytics remain available.
+
+## 2026-10-03 — Backend routes to a Microsoft Foundry agent
+
+The FastAPI backend no longer plans or runs SQL. It forwards each conversation to the
+Foundry agent `olist-agent` through the project's Responses API, using
+`azure-ai-projects` with an `agent_reference` (name and optional version from env).
+Authentication is Microsoft Entra ID only, as Foundry agents do not accept API keys.
+The browser keeps the conversation and sends it with every question, so the backend
+stays stateless. The OpenRouter planner, SQL compiler, warehouse adapter and their
+scripts and docs were removed; warehouse access and data rules now live in the agent.
