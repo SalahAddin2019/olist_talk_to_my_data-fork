@@ -56,6 +56,14 @@ flowchart LR
 - Answers are rendered as Markdown (tables included) without raw HTML.
 - Foundry errors map to short messages (429 rate limit, 503 authentication, 504 timeout,
   502 other) with a request ID. Questions are never echoed in validation errors or logs.
+- Caller protection: a streaming request byte limit, a conversation character budget (the UI
+  trims older history to fit), a concurrency gate that answers 429 when busy, and ACA
+  built-in authentication in production (`APP_ENV=production` refuses to start without it).
+  See [docs/cloud.md](docs/cloud.md).
+- Warehouse safety now depends on the agent's tools and database identity. What must be
+  verified per agent version is in [docs/agent-safety.md](docs/agent-safety.md).
+- The previous SQL table, chart and query-inspection view was removed on purpose; answers
+  come from the agent as Markdown.
 
 ## Validation
 
@@ -71,10 +79,25 @@ npm run test:e2e   # needs the built app running on port 8000 and Microsoft Edge
 scope and `agent_reference` body) against a mocked transport. Browser tests use API fixtures,
 so they do not call Foundry.
 
+Live checks (use the `PG*` and Foundry settings in `.env`; the evaluation uses model quota):
+
+```powershell
+uv run --extra warehouse python scripts/verify_warehouse.py   # counts, grain, keys, totals
+uv run --extra warehouse python scripts/inspect_category_keys.py
+uv run --extra warehouse python scripts/evaluate_agent.py     # agent safety and accuracy
+```
+
+Scripts read only `olist_olap_abd` in read-only transactions and append every query to
+`logs/db_operations.md`.
+
 ## Project map
 
 - `backend/app/`: settings, Foundry client and API.
 - `frontend/src/`: conversation UI and Markdown answer rendering.
 - `knime/`, `sql/`, `scripts/`, `pipeline/`, `dataset/`, `linkedService/`, `factory/`: the
   warehouse ETL (KNIME and Azure Data Factory) that loads `olist_olap_abd`.
+- `scripts/`: read-only warehouse checks and the live agent evaluation.
+- `sql/04_agent_reader_role.sql`: least-privilege role for the agent's database identity.
+- `docs/cloud.md`, `docs/agent-safety.md`: deployment and agent safety requirements;
+  `docs/archive/`: the previous backend's decisions, cloud guide and verification record.
 - `docs/decisions.md`: decision log.

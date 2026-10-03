@@ -2,7 +2,9 @@ import { expect, test } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/health', (route) =>
-    route.fulfill({ json: { status: 'ok', configured: true, agent: 'olist-agent' } }),
+    route.fulfill({
+      json: { status: 'ok', configured: true, agent: 'olist-agent', max_conversation_chars: 24000 },
+    }),
   );
 });
 
@@ -46,6 +48,26 @@ test('markdown answers, follow-up history and reset', async ({ page }) => {
   expect(requests[1].messages[2].content).toBe('Only delivered orders');
   await page.getByRole('button', { name: 'New conversation' }).click();
   await expect(page.locator('.turn')).toHaveCount(0);
+});
+
+test('a very long answer does not break the next follow-up', async ({ page }) => {
+  const sizes: number[] = [];
+  await page.route('**/api/chat', async (route) => {
+    const { messages } = route.request().postDataJSON();
+    sizes.push(
+      messages.reduce((total: number, m: { content: string }) => total + m.content.length, 0),
+    );
+    await route.fulfill({ json: { request_id: 'fixture', answer: 'x'.repeat(32001) } });
+  });
+  await page.goto('/');
+  for (const question of ['First question', 'Second question', 'Third question']) {
+    await page.getByRole('textbox').fill(question);
+    await page.getByRole('button', { name: 'Send question' }).click();
+    await expect(page.locator('.thinking')).toHaveCount(0);
+  }
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(sizes).toHaveLength(3);
+  expect(Math.max(...sizes)).toBeLessThanOrEqual(24000);
 });
 
 test('API errors are displayed and submission can be retried', async ({ page }) => {

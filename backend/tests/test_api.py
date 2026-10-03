@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import openai
 import pytest
@@ -67,7 +69,6 @@ def test_chat_forwards_history_and_returns_answer():
         {"messages": [{"role": "assistant", "content": "hi"}]},
         {"messages": [{"role": "user", "content": "   "}]},
         {"messages": [{"role": "system", "content": "DROP TABLE"}]},
-        {"messages": [{"role": "user", "content": "x" * 32001}]},
         {"messages": [{"role": "user", "content": "hi"}] * 21},
         {**QUESTION, "extra": "DROP TABLE"},
     ],
@@ -107,11 +108,74 @@ def test_empty_answer_is_an_error():
 
 def test_unconfigured_backend_reports_setup_error():
     with TestClient(create_app(Settings(_env_file=None))) as api:
-        assert api.get("/api/health").json() == {
-            "status": "ok",
-            "configured": False,
-            "agent": None,
-        }
+        health = api.get("/api/health").json()
+        assert health["configured"] is False and health["agent"] is None
         response = api.post("/api/chat", json=QUESTION)
     assert response.status_code == 503
     assert "FOUNDRY_PROJECT_ENDPOINT" in response.json()["error"]
+
+
+def test_production_requires_caller_authentication():
+    with pytest.raises(ValueError):
+        settings(app_env="production")
+    with pytest.raises(ValueError):
+        settings(app_env="production", auth_mode="azure_container_apps", allowed_hosts=["*"])
+    agent = FakeAgent()
+    config = settings(app_env="production", auth_mode="azure_container_apps")
+    with client(agent, config) as api:
+        assert api.get("/api/health").status_code == 200
+        assert api.post("/api/chat", json=QUESTION).status_code == 401
+        signed_in = {"x-ms-client-principal-id": "user-1"}
+        assert api.post("/api/chat", json=QUESTION, headers=signed_in).status_code == 200
+    assert agent.received is not None
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_request_bytes_are_bounded_while_streaming(chunked):
+    agent = FakeAgent()
+    padded = b'{"messages": [{"role": "user", "content": "hi"}]}' + b" " * 70_000
+    body = iter([padded[i : i + 4096] for i in range(0, len(padded), 4096)]) if chunked else padded
+    with client(agent) as api:
+        response = api.post("/api/chat", content=body)
+    assert response.status_code == 413
+    assert agent.received is None
+
+
+def test_conversation_budget_is_enforced():
+    agent = FakeAgent()
+    long_history = {
+        "messages": [
+            {"role": "user", "content": "x" * 3000},
+            {"role": "assistant", "content": "y" * 3000},
+            {"role": "user", "content": "next"},
+        ]
+    }
+    with client(agent, settings(max_conversation_chars=5000)) as api:
+        response = api.post("/api/chat", json=long_history)
+    assert response.status_code == 413
+    assert agent.received is None
+
+
+def test_concurrent_calls_beyond_the_limit_are_rejected():
+    class SlowAgent(FakeAgent):
+        active = peak = 0
+
+        async def ask(self, messages):
+            SlowAgent.active += 1
+            SlowAgent.peak = max(SlowAgent.peak, SlowAgent.active)
+            await asyncio.sleep(0.2)
+            SlowAgent.active -= 1
+            return "ok"
+
+    async def burst():
+        app = create_app(settings(max_concurrent_requests=2), SlowAgent())
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api:
+                return await asyncio.gather(
+                    *(api.post("/api/chat", json=QUESTION) for _ in range(8))
+                )
+
+    statuses = sorted(response.status_code for response in asyncio.run(burst()))
+    assert statuses == [200, 200] + [429] * 6
+    assert SlowAgent.peak == 2

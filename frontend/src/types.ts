@@ -10,6 +10,7 @@ export interface Health {
   status: string;
   configured: boolean;
   agent: string | null;
+  max_conversation_chars: number;
 }
 export interface Turn {
   id: string;

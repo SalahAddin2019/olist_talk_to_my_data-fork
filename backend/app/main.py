@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal
@@ -22,7 +23,8 @@ class Message(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=32000)
+    # Size is bounded by the request byte limit and the conversation budget.
+    content: str = Field(min_length=1)
 
 
 def ends_with_question(messages: list[Message]) -> list[Message]:
@@ -60,6 +62,7 @@ ERRORS: list[tuple[tuple[type[Exception], ...], int, str]] = [
 
 def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
     settings = settings or Settings()
+    gate = asyncio.Semaphore(settings.max_concurrent_requests)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -83,6 +86,20 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
     @app.middleware("http")
     async def request_context(request: Request, call_next):
         request.state.request_id = uuid4().hex
+        if settings.auth_mode == "azure_container_apps" and request.url.path != "/api/health":
+            # Only safe behind ACA built-in auth that rejects unauthenticated requests;
+            # ACA strips client-supplied identity headers. See docs/cloud.md.
+            if not request.headers.get("x-ms-client-principal-id"):
+                return error(request, 401, "Sign in to continue.")
+        if request.method == "POST":
+            # Bounded streaming read, including requests without Content-Length.
+            size, chunks = 0, []
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > settings.max_request_bytes:
+                    return error(request, 413, "Request too large.")
+                chunks.append(chunk)
+            request._body = b"".join(chunks)
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -104,7 +121,7 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError):
         # The default handler echoes the input back; questions may be sensitive.
-        return error(request, 422, "Send 1–20 messages of at most 32,000 characters each.")
+        return error(request, 422, "Send 1–20 messages ending with a non-empty question.")
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
@@ -129,6 +146,7 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
             "status": "ok",
             "configured": settings.configured,
             "agent": settings.foundry_agent_name or None,
+            "max_conversation_chars": settings.max_conversation_chars,
         }
 
     @app.post("/api/chat", response_model=ChatResponse)
@@ -139,9 +157,18 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
                 "Foundry is not configured. Set FOUNDRY_PROJECT_ENDPOINT and "
                 "FOUNDRY_AGENT_NAME in the backend environment and restart the server.",
             )
-        answer = await request.app.state.agent.ask(
-            [message.model_dump() for message in body.messages]
-        )
+        if sum(len(message.content) for message in body.messages) > settings.max_conversation_chars:
+            raise HTTPException(413, "This conversation is too long. Start a new conversation.")
+        if gate.locked():
+            raise HTTPException(
+                429,
+                "The assistant is busy. Please try again shortly.",
+                headers={"Retry-After": "3"},
+            )
+        async with gate:
+            answer = await request.app.state.agent.ask(
+                [message.model_dump() for message in body.messages]
+            )
         if not answer.strip():
             raise HTTPException(502, "The Foundry agent returned an empty answer. Try again.")
         return ChatResponse(request_id=request.state.request_id, answer=answer)

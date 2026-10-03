@@ -1,0 +1,39 @@
+# Deploying to Azure
+
+The app is one stateless container: FastAPI serves the built React UI and forwards each
+conversation to the Foundry agent. The earlier OpenRouter/PostgreSQL design is archived in
+[archive/cloud.md](archive/cloud.md).
+
+## Already implemented
+
+- Configuration from environment; no secrets in the repository or the browser.
+- Microsoft Entra ID to Foundry through `DefaultAzureCredential` (managed identity in Azure).
+- Caller authentication mode for Azure Container Apps (ACA) built-in auth, enforced by a
+  startup guard: `APP_ENV=production` refuses to start unless `AUTH_MODE=azure_container_apps`
+  and `ALLOWED_HOSTS` is explicit.
+- Streaming request byte limit (`MAX_REQUEST_BYTES`), conversation budget
+  (`MAX_CONVERSATION_CHARS`), and a per-process concurrency gate (`MAX_CONCURRENT_REQUESTS`)
+  that answers 429 when saturated.
+- Request IDs, no question text in logs or validation errors, non-root container, health check.
+
+## Deployment sequence (not yet provisioned)
+
+1. Build and test the image, push it to Azure Container Registry, and deploy it to ACA on
+   port 8000 with HTTPS-only ingress.
+2. Enable **ACA built-in authentication** with the Microsoft Entra provider, require
+   authentication, and reject unauthenticated requests. Restrict allowed users or app roles.
+   The API trusts `x-ms-client-principal-id` only in `AUTH_MODE=azure_container_apps`; ACA
+   strips client-supplied identity headers, so ACA must be the only ingress path. Never use
+   that mode on a bare public server. Test signed-in and anonymous requests before exposure.
+3. Set `APP_ENV=production`, `AUTH_MODE=azure_container_apps`, and exact `ALLOWED_HOSTS`
+   (include `localhost` for the health check).
+4. Give the container app a **managed identity** and assign it **Azure AI User** on the
+   Foundry project, nothing broader. Caller sign-in and the backend's Foundry identity are
+   separate: callers never receive Foundry tokens.
+5. Pin `FOUNDRY_AGENT_VERSION` to a reviewed agent version (see
+   [agent-safety.md](agent-safety.md)) instead of following the latest version in production.
+6. Add per-user quotas and budget alerts at an authenticated gateway such as API Management.
+   The in-process gate is overload protection only and is per replica.
+7. Send stdout to Azure Monitor / Application Insights and alert on 429, 502–504 rates and
+   latency. Use Foundry tracing and evaluations for agent quality.
+8. Prefer private networking between the container environment, Foundry and PostgreSQL.

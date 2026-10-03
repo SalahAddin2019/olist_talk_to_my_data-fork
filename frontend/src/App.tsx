@@ -15,9 +15,8 @@ import {
 } from 'lucide-react';
 import { request } from './api';
 import Answer from './Answer';
-import type { Answer as ChatAnswer, Health, Message, Turn } from './types';
-
-const MAX_PRIOR_TURNS = 9;
+import { buildMessages } from './history';
+import type { Answer as ChatAnswer, Health, Turn } from './types';
 
 const suggestions = [
   { tag: 'PERFORMANCE', question: 'What is our total revenue and order count?', icon: BarChart3 },
@@ -63,15 +62,7 @@ export default function App() {
     if (!question || activeRef.current) return;
     activeRef.current = true;
     const id = crypto.randomUUID();
-    // The browser owns the conversation; the backend accepts at most 20 messages.
-    const messages: Message[] = turns
-      .filter((turn) => turn.answer)
-      .slice(-MAX_PRIOR_TURNS)
-      .flatMap((turn): Message[] => [
-        { role: 'user', content: turn.question },
-        { role: 'assistant', content: turn.answer! },
-      ]);
-    messages.push({ role: 'user', content: question });
+    const messages = buildMessages(turns, question, health?.max_conversation_chars ?? 24000);
     const controller = new AbortController();
     controllerRef.current = controller;
     setTurns((previous) => [...previous, { id, question }]);
