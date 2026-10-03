@@ -2,10 +2,9 @@ import { expect, test } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/health', (route) =>
-    route.fulfill({
-      json: { status: 'ok', configured: true, agent: 'olist-agent', max_conversation_chars: 24000 },
-    }),
+    route.fulfill({ json: { status: 'ok', configured: true, agent: 'olist-agent' } }),
   );
+  await page.route('**/api/conversations', (route) => route.fulfill({ json: [] }));
 });
 
 test('home page renders with no browser errors', async ({ page }) => {
@@ -21,13 +20,14 @@ test('home page renders with no browser errors', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test('markdown answers, follow-up history and reset', async ({ page }) => {
-  const requests: { messages: { role: string; content: string }[] }[] = [];
+test('markdown answers, follow-ups in the Foundry conversation and reset', async ({ page }) => {
+  const requests: { question: string; conversation_id: string | null }[] = [];
   await page.route('**/api/chat', async (route) => {
     requests.push(route.request().postDataJSON());
     await route.fulfill({
       json: {
         request_id: 'browser-fixture',
+        conversation_id: 'conv_1',
         answer: 'Revenue by month:\n\n| Month | Revenue |\n| --- | --- |\n| 2018-01 | R$ 100.25 |',
       },
     });
@@ -40,34 +40,73 @@ test('markdown answers, follow-up history and reset', async ({ page }) => {
   await page.getByRole('button', { name: 'Send question' }).click();
   await expect(page.locator('.turn')).toHaveCount(2);
   await expect(page.locator('.thinking')).toHaveCount(0);
-  expect(requests[1].messages.map((message) => message.role)).toEqual([
-    'user',
-    'assistant',
-    'user',
+  expect(requests).toEqual([
+    { question: 'Show monthly revenue for 2018.', conversation_id: null },
+    { question: 'Only delivered orders', conversation_id: 'conv_1' },
   ]);
-  expect(requests[1].messages[2].content).toBe('Only delivered orders');
+  await expect(page).toHaveURL(/\?c=conv_1$/);
   await page.getByRole('button', { name: 'New conversation' }).click();
   await expect(page.locator('.turn')).toHaveCount(0);
+  await expect(page).not.toHaveURL(/\?c=/);
 });
 
-test('a very long answer does not break the next follow-up', async ({ page }) => {
-  const sizes: number[] = [];
+test('past conversations are listed and reopened from Foundry', async ({ page }) => {
+  await page.route('**/api/conversations', (route) =>
+    route.fulfill({
+      json: [
+        { id: 'conv_1', title: 'Total revenue?', created_at: 1 },
+        { id: 'conv_2', title: 'Top sellers', created_at: 0 },
+      ],
+    }),
+  );
+  await page.route('**/api/conversations/conv_1', (route) =>
+    route.fulfill({
+      json: {
+        id: 'conv_1',
+        messages: [
+          { id: 'm1', role: 'user', content: 'Total revenue?' },
+          { id: 'm2', role: 'assistant', content: 'Total revenue is **R$ 13.6M**.' },
+        ],
+      },
+    }),
+  );
+  const requests: { question: string; conversation_id: string | null }[] = [];
   await page.route('**/api/chat', async (route) => {
-    const { messages } = route.request().postDataJSON();
-    sizes.push(
-      messages.reduce((total: number, m: { content: string }) => total + m.content.length, 0),
-    );
-    await route.fulfill({ json: { request_id: 'fixture', answer: 'x'.repeat(32001) } });
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({
+      json: { request_id: 'fixture', conversation_id: 'conv_1', answer: 'R$ 7.4M' },
+    });
   });
   await page.goto('/');
-  for (const question of ['First question', 'Second question', 'Third question']) {
-    await page.getByRole('textbox').fill(question);
-    await page.getByRole('button', { name: 'Send question' }).click();
-    await expect(page.locator('.thinking')).toHaveCount(0);
-  }
-  await expect(page.getByRole('alert')).toHaveCount(0);
-  expect(sizes).toHaveLength(3);
-  expect(Math.max(...sizes)).toBeLessThanOrEqual(24000);
+  const history = page.getByRole('navigation', { name: 'Conversation history' });
+  await history.getByRole('link', { name: 'Total revenue?' }).click();
+  await expect(page).toHaveURL(/\?c=conv_1$/);
+  await expect(page.locator('.turn')).toHaveCount(1);
+  await expect(page.getByText('R$ 13.6M')).toBeVisible();
+  await expect(history.getByRole('link', { name: 'Total revenue?' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await page.getByRole('textbox').fill('Only 2018');
+  await page.getByRole('button', { name: 'Send question' }).click();
+  await expect(page.locator('.turn')).toHaveCount(2);
+  expect(requests).toEqual([{ question: 'Only 2018', conversation_id: 'conv_1' }]);
+
+  await page.reload();
+  await expect(page.getByText('R$ 13.6M')).toBeVisible();
+});
+
+test('a missing conversation link shows a message', async ({ page }) => {
+  await page.route('**/api/conversations/conv_gone', (route) =>
+    route.fulfill({
+      status: 404,
+      json: { error: 'Conversation not found. It may have been deleted.' },
+    }),
+  );
+  await page.goto('/?c=conv_gone');
+  await expect(page.getByRole('alert')).toContainText('Conversation not found');
+  await expect(page).not.toHaveURL(/\?c=/);
+  await expect(page.getByRole('heading', { name: 'Talk to your data.' })).toBeVisible();
 });
 
 test('API errors are displayed and submission can be retried', async ({ page }) => {
@@ -105,6 +144,7 @@ test('numeric tables render as a chart with a table view', async ({ page }) => {
     route.fulfill({
       json: {
         request_id: 'fixture',
+        conversation_id: 'conv_1',
         answer:
           '| State | Orders | Revenue |\n| --- | --- | --- |\n| SP | 41,746 | R$ 5,998,226.96 |\n| RJ | 12,852 | R$ 2,144,379.69 |\n| MG | 11,635 | R$ 1,872,257.26 |',
       },
