@@ -53,7 +53,16 @@ flowchart LR
   accept API keys, so no secret is stored in the repository or sent to the browser.
 - The browser keeps the conversation (up to 20 messages) and sends it with each question, so the
   backend is stateless. Reloading the page or starting a new conversation clears it.
-- Answers are rendered as Markdown (tables included) without raw HTML.
+- Answers are rendered as Markdown without raw HTML. A table with a numeric column also gets
+  a bar chart (shown first, with a Chart/Table toggle and a measure picker when there are
+  several numeric columns).
+- The UI is React 19 + Tailwind CSS v4 (CSS-first `@theme`, no config file) with semantic
+  OKLCH color tokens defined once through `light-dark()`. It follows the OS theme; the toggle
+  pins light or dark (`public/theme.js` applies it before first paint, as an external file
+  because the CSP blocks inline scripts). Inter is self-hosted for the same reason.
+- Conversation UX: suggested questions, a stop button (or Esc) while waiting, an elapsed-time
+  indicator, copy and regenerate on answers, in-place retry on errors, a per-conversation
+  question list in the sidebar, and a `role="log"` conversation region for screen readers.
 - Foundry errors map to short messages (429 rate limit, 503 authentication, 504 timeout,
   502 other) with a request ID. Questions are never echoed in validation errors or logs.
 - Caller protection: a streaming request byte limit, a conversation character budget (the UI
@@ -71,8 +80,9 @@ flowchart LR
 uv run pytest
 uv run ruff check backend
 cd frontend
+npm test           # unit tests (Vitest): number parsing, chart detection, history budget
 npm run build
-npm run test:e2e   # needs the built app running on port 8000 and Microsoft Edge
+npm run test:e2e   # needs the built app running on port 8000 (or BASE_URL) and Microsoft Edge
 ```
 
 `backend/tests/test_foundry.py` checks the exact request sent to Foundry (URL, Entra token
@@ -93,7 +103,7 @@ Scripts read only `olist_olap_abd` in read-only transactions and append every qu
 ## Project map
 
 - `backend/app/`: settings, Foundry client and API.
-- `frontend/src/`: conversation UI and Markdown answer rendering.
+- `frontend/src/`: conversation UI (`components/`), Markdown answers and table charts (`table.ts`).
 - `knime/`, `sql/`, `scripts/`, `pipeline/`, `dataset/`, `linkedService/`, `factory/`: the
   warehouse ETL (KNIME and Azure Data Factory) that loads `olist_olap_abd`.
 - `scripts/`: read-only warehouse checks and the live agent evaluation.

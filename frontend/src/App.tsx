@@ -1,41 +1,36 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  ArrowDown,
-  ArrowRight,
-  ArrowUp,
-  BarChart3,
-  Bot,
-  ChevronRight,
-  Database,
-  Layers3,
-  LoaderCircle,
-  Plus,
-  ShieldCheck,
-  Sparkles,
-} from 'lucide-react';
+import { RefreshCw, TriangleAlert } from 'lucide-react';
 import { request } from './api';
-import Answer from './Answer';
+import Composer from './components/Composer';
+import EmptyState from './components/EmptyState';
+import Sidebar, { Brand, NewChatButton } from './components/Sidebar';
+import ThemeToggle from './components/ThemeToggle';
+import TurnView from './components/TurnView';
 import { buildMessages } from './history';
 import type { Answer as ChatAnswer, Health, Turn } from './types';
 
-const suggestions = [
-  { tag: 'PERFORMANCE', question: 'What is our total revenue and order count?', icon: BarChart3 },
-  { tag: 'PRODUCTS', question: 'Which 5 categories generate the most revenue?', icon: Layers3 },
-  { tag: 'TRENDS', question: 'Show monthly revenue for 2018.', icon: ArrowRight },
-  { tag: 'CUSTOMERS', question: 'Which states have the most orders?', icon: Database },
-];
+const TIMEOUT_MS = 180000;
+
+function failure(error: unknown): string {
+  if (error instanceof DOMException && error.name === 'TimeoutError')
+    return 'The Foundry agent took too long to answer. Try again.';
+  if (error instanceof TypeError) return 'Could not reach the backend. Check that it is running.';
+  return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
+}
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [connectionError, setConnectionError] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [pendingId, setPendingId] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
-  const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
-  const activeRef = useRef(false);
+  const busy = pendingId !== null;
+  const budget = health?.max_conversation_chars ?? 24000;
+  const agent = health?.agent ?? 'the Foundry agent';
+
   useEffect(() => {
     const controller = new AbortController();
     setConnectionError('');
@@ -48,264 +43,155 @@ export default function App() {
           );
       })
       .catch((error) => {
-        if (!controller.signal.aborted) setConnectionError(error.message);
+        if (!controller.signal.aborted) setConnectionError(failure(error));
       });
     return () => controller.abort();
   }, [refresh]);
   useEffect(() => () => controllerRef.current?.abort(), []);
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [turns, busy]);
+    if (!busy) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') controllerRef.current?.abort();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [busy]);
+  useEffect(() => {
+    if (pendingId)
+      document
+        .getElementById(`turn-${pendingId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [pendingId]);
 
-  async function ask(question: string) {
-    question = question.trim();
-    if (!question || activeRef.current) return;
-    activeRef.current = true;
+  async function ask(text: string, history: Turn[] = turns) {
+    const question = text.trim();
+    if (!question || controllerRef.current) return;
     const id = crypto.randomUUID();
-    const messages = buildMessages(turns, question, health?.max_conversation_chars ?? 24000);
+    const messages = buildMessages(history, question, budget);
     const controller = new AbortController();
     controllerRef.current = controller;
-    setTurns((previous) => [...previous, { id, question }]);
+    const started = performance.now();
+    setTurns([...history, { id, question }]);
     setInput('');
-    setBusy(true);
+    setPendingId(id);
+    const update = (patch: Partial<Turn>) =>
+      setTurns((previous) =>
+        previous.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn)),
+      );
     try {
       const { answer } = await request<ChatAnswer>('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages }),
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(180000)]),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(TIMEOUT_MS)]),
       });
-      setTurns((previous) => previous.map((turn) => (turn.id === id ? { ...turn, answer } : turn)));
+      update({ answer, seconds: Math.round((performance.now() - started) / 1000) });
     } catch (error) {
-      setTurns((previous) =>
-        previous.map((turn) =>
-          turn.id === id
-            ? {
-                ...turn,
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : 'Something went wrong. Please try again.',
-              }
-            : turn,
-        ),
-      );
+      update(controller.signal.aborted ? { stopped: true } : { error: failure(error) });
     } finally {
-      setBusy(false);
-      activeRef.current = false;
-      inputRef.current?.focus();
+      controllerRef.current = null;
+      setPendingId(null);
+      const active = document.activeElement;
+      if (!active || active === document.body) inputRef.current?.focus();
     }
   }
 
+  function retry(turn: Turn) {
+    void ask(
+      turn.question,
+      turns.filter((other) => other.id !== turn.id),
+    );
+  }
+
+  function reset() {
+    setTurns([]);
+    setInput('');
+    inputRef.current?.focus();
+  }
+
+  const contextTurns = turns.length
+    ? (buildMessages(turns, input || ' ', budget).length - 1) / 2
+    : 0;
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <a href="/" className="brand" aria-label="Olist home">
-          <span className="brand-icon">
-            <BarChart3 aria-hidden="true" size={23} />
-          </span>
-          <strong>
-            olist<span className="brand-dot">.</span>
-          </strong>
-          <span className="workspace-tag">LAB</span>
-        </a>
-        <button
-          className="new-chat"
-          disabled={busy}
-          onClick={() => {
-            setTurns([]);
-            setInput('');
-            inputRef.current?.focus();
-          }}
-        >
-          <Plus aria-hidden="true" size={17} /> New conversation <span>↗</span>
-        </button>
-        <div className="nav-label">WORKSPACE</div>
-        <span className="nav-item active">
-          <Sparkles aria-hidden="true" size={17} /> Ask your data{' '}
-          <ChevronRight aria-hidden="true" size={14} />
-        </span>
-        <div className="sidebar-spacer" />
-        <div className="source-card">
-          <div className="source-icon">
-            <Bot aria-hidden="true" size={18} />
-          </div>
-          <div>
-            <strong>{health?.agent ?? 'Foundry agent'}</strong>
-            <span>Microsoft Foundry</span>
-          </div>
-          <span className={`status-dot ${health?.configured ? '' : 'offline'}`} />
-        </div>
-        <div className="sidebar-bottom">
-          <span className="avatar">A</span>
-          <div>
-            <strong>Analytics workspace</strong>
-            <span>Local development</span>
-          </div>
-          <ShieldCheck aria-hidden="true" size={16} />
-        </div>
-      </aside>
+    <div className="min-h-dvh">
+      <Sidebar health={health} turns={turns} busy={busy} onNew={reset} />
 
-      <main>
-        <header className="topbar">
-          <div>
-            Workspace <ChevronRight aria-hidden="true" size={13} />
-            <strong>Ask your data</strong>
+      <div className="flex min-h-dvh flex-col lg:pl-72">
+        <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-line bg-bg/80 px-4 backdrop-blur-xl lg:hidden">
+          <Brand />
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <NewChatButton busy={busy} onNew={reset} compact />
           </div>
-          <span className="model-badge">
-            <span className="purple-dot" /> Microsoft Foundry
-          </span>
         </header>
-        <div className="main-body">
-          <div className="page-heading">
-            <div>
-              <div className="eyebrow">YOUR ANALYTICS, IN CONVERSATION</div>
-              <h1>Talk to your data.</h1>
-              <p>Ask a question. Your Microsoft Foundry agent answers from the Olist data.</p>
-            </div>
-          </div>
-          {connectionError && (
-            <div className="connection-error" role="alert">
-              {connectionError}{' '}
-              <button onClick={() => setRefresh((value) => value + 1)}>Check again</button>
-            </div>
-          )}
 
-          <section
-            className={`conversation ${turns.length ? 'has-turns' : ''}`}
-            aria-label="Conversation"
-          >
-            {!turns.length ? (
-              <div className="welcome">
-                <span className="welcome-mark">
-                  <Sparkles aria-hidden="true" size={25} strokeWidth={1.6} />
-                </span>
-                <h2>A little curiosity. A lot of insight.</h2>
-                <p>
-                  Explore revenue, orders, and the stories behind your sales.
-                  <br />
-                  Start with a question below, or ask your own.
-                </p>
-                <div className="suggestion-grid">
-                  {suggestions.map(({ tag, question, icon: Icon }) => (
-                    <button
-                      key={tag}
-                      className="suggestion"
-                      onClick={() => void ask(question)}
-                      disabled={busy}
-                    >
-                      <span className="suggestion-top">
-                        <Icon aria-hidden="true" size={16} />
-                        <span>{tag}</span>
-                        <ArrowUp aria-hidden="true" className="suggestion-arrow" size={15} />
-                      </span>
-                      <span>{question}</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="data-note">
-                  <Layers3 aria-hidden="true" size={13} /> Follow-up questions keep the conversation
-                  context.
-                </div>
-              </div>
-            ) : (
-              <div className="turns">
-                {turns.map((turn) => (
-                  <article key={turn.id} className="turn">
-                    <div className="user-message">
-                      <span className="you-label">YOU</span>
-                      <p>{turn.question}</p>
-                    </div>
-                    {turn.answer && <Answer text={turn.answer} />}
-                    {turn.error && (
-                      <div className="turn-error" role="alert">
-                        <p>{turn.error}</p>
-                        <button disabled={busy} onClick={() => void ask(turn.question)}>
-                          Try again
-                        </button>
-                      </div>
-                    )}
-                  </article>
-                ))}
-                {busy && (
-                  <div className="thinking" role="status">
-                    <LoaderCircle aria-hidden="true" size={17} className="spin" /> Asking your
-                    Foundry agent…
-                  </div>
-                )}
-                <div ref={endRef} />
-              </div>
-            )}
-          </section>
-          <div className="composer-wrap">
-            <form
-              className="composer"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void ask(input);
-              }}
-            >
-              <label className="sr-only" htmlFor="question">
-                Ask a question about your Olist data
-              </label>
-              <textarea
-                ref={inputRef}
-                id="question"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                maxLength={2000}
-                placeholder={
-                  turns.length
-                    ? 'Ask a follow-up, e.g. “Only delivered orders”'
-                    : 'Ask anything about your sales data…'
-                }
-                rows={2}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    void ask(input);
-                  }
-                }}
-              />
-              <div className="composer-bottom">
-                <span>
-                  <Database aria-hidden="true" size={13} /> Olist data{' '}
-                  <span className="composer-divider">/</span>{' '}
-                  {turns.length
-                    ? 'Follow-up questions supported'
-                    : 'Answered by your Foundry agent'}
-                </span>
+        <main className="relative flex flex-1 flex-col">
+          {!turns.length && (
+            <div
+              className="hero-glow pointer-events-none absolute inset-x-0 top-0 h-[480px]"
+              aria-hidden="true"
+            />
+          )}
+          <div className="relative mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 sm:px-6">
+            {connectionError && (
+              <div
+                className="mt-6 flex flex-wrap items-start gap-3 rounded-xl border border-warn-ink/20 bg-warn-bg px-4 py-3 text-sm text-warn-ink"
+                role="alert"
+              >
+                <TriangleAlert aria-hidden="true" size={16} className="mt-0.5 shrink-0" />
+                <p className="m-0 min-w-0 flex-1">{connectionError}</p>
                 <button
-                  className="send-button"
-                  type="submit"
-                  aria-label="Send question"
-                  disabled={busy || !input.trim()}
+                  type="button"
+                  onClick={() => setRefresh((value) => value + 1)}
+                  className="flex items-center gap-1.5 font-semibold underline-offset-2 hover:underline"
                 >
-                  {busy ? (
-                    <LoaderCircle aria-hidden="true" className="spin" size={18} />
-                  ) : (
-                    <ArrowUp aria-hidden="true" size={19} />
-                  )}
+                  <RefreshCw aria-hidden="true" size={13} /> Check again
                 </button>
               </div>
-            </form>
-            <div className="composer-caption">
-              <span>
-                Answers are generated by an AI agent. Review them before making decisions.
-              </span>
-              <span>
-                Enter to send <ArrowDown aria-hidden="true" size={11} />
-              </span>
+            )}
+
+            {turns.length ? (
+              <section
+                role="log"
+                aria-label="Conversation"
+                aria-busy={busy}
+                className="flex-1 space-y-10 py-8"
+              >
+                {turns.map((turn, index) => (
+                  <TurnView
+                    key={turn.id}
+                    turn={turn}
+                    agent={agent}
+                    pending={turn.id === pendingId}
+                    canRetry={!busy && (index === turns.length - 1 || !turn.answer)}
+                    onRetry={() => retry(turn)}
+                  />
+                ))}
+              </section>
+            ) : (
+              <EmptyState disabled={busy} onAsk={(question) => void ask(question)} />
+            )}
+
+            <div className="sticky bottom-0 z-10 -mx-2 bg-gradient-to-t from-bg from-70% to-transparent px-2 pt-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
+              <Composer
+                inputRef={inputRef}
+                value={input}
+                busy={busy}
+                followUp={turns.length > 0}
+                contextTurns={contextTurns}
+                onChange={setInput}
+                onSubmit={() => void ask(input)}
+                onStop={() => controllerRef.current?.abort()}
+              />
+              <p className="mt-2.5 mb-0 text-center text-[0.6875rem] text-ink-3">
+                Answers are generated by an AI agent from read-only warehouse queries. Review them
+                before making decisions.
+              </p>
             </div>
           </div>
-        </div>
-        <footer className="page-footer">
-          <span>
-            <span className={`status-dot ${health?.configured ? '' : 'offline'}`} /> Powered by
-            Microsoft Foundry
-          </span>
-        </footer>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }
