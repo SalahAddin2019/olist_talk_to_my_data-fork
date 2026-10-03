@@ -37,7 +37,7 @@ export default function AnswerTable({ node, ...props }: Props) {
                 type="button"
                 aria-pressed={item === active}
                 onClick={() => setColumn(index)}
-                className="rounded-md px-2 py-1 text-xs font-medium text-ink-3 transition-colors hover:text-ink aria-pressed:bg-accent-soft aria-pressed:text-accent-strong"
+                className="rounded-md px-2 py-1 text-xs font-medium text-ink-3 transition-colors hover:text-ink pointer-coarse:px-2.5 pointer-coarse:py-2 aria-pressed:bg-accent-soft aria-pressed:text-accent-strong"
               >
                 {item.label}
               </button>
@@ -64,7 +64,7 @@ export default function AnswerTable({ node, ...props }: Props) {
               type="button"
               aria-pressed={view === value}
               onClick={() => setView(value)}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-ink-3 transition-colors hover:text-ink aria-pressed:bg-surface aria-pressed:text-ink aria-pressed:shadow-sm"
+              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-ink-3 transition-colors hover:text-ink pointer-coarse:px-2.5 pointer-coarse:py-2 aria-pressed:bg-surface aria-pressed:text-ink aria-pressed:shadow-sm"
             >
               <Icon aria-hidden="true" size={13} /> {label}
             </button>

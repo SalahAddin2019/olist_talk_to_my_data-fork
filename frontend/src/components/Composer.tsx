@@ -82,7 +82,7 @@ export default function Composer({
             type="button"
             onClick={onStop}
             aria-label="Stop waiting for the answer"
-            className="grid size-9 place-items-center rounded-xl bg-ink text-bg transition-transform active:scale-95"
+            className="grid size-10 place-items-center rounded-xl sm:size-9 bg-ink text-bg transition-transform active:scale-95"
           >
             <Square aria-hidden="true" size={13} fill="currentColor" />
           </button>
@@ -91,7 +91,7 @@ export default function Composer({
             type="submit"
             aria-label="Send question"
             disabled={!value.trim()}
-            className="grid size-9 place-items-center rounded-xl bg-accent text-on-accent shadow-sm transition-[transform,opacity,background-color] hover:bg-accent-strong active:scale-95 disabled:opacity-35"
+            className="grid size-10 place-items-center rounded-xl sm:size-9 bg-accent text-on-accent shadow-sm transition-[transform,opacity,background-color] hover:bg-accent-strong active:scale-95 disabled:opacity-35"
           >
             <ArrowUp aria-hidden="true" size={18} strokeWidth={2.4} />
           </button>
