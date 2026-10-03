@@ -1,11 +1,11 @@
-"""Read-only verification. Run with: uv run python scripts/verify_warehouse.py."""
+"""Read-only warehouse verification.
+
+Run with: uv run --extra warehouse python scripts/verify_warehouse.py
+"""
 
 import json
-from pathlib import Path
-from uuid import uuid4
 
-from app.config import Settings
-from app.warehouse import Warehouse, serialize
+from warehouse import ROOT, Warehouse
 
 CHECKS = {
     "counts": """
@@ -62,26 +62,17 @@ CHECKS = {
 
 
 def main():
-    warehouse = Warehouse(Settings())
-    warehouse.open()
     report = {}
     try:
-        for name, sql in CHECKS.items():
-            report[name] = [
-                serialize(row)
-                for row in warehouse.read(sql, (), uuid4().hex, f"verification.{name}")
-            ]
-        report["metadata"] = warehouse.metadata(uuid4().hex)
-        output = Path("artifacts/warehouse-verification.json")
+        with Warehouse() as warehouse:
+            for name, sql in CHECKS.items():
+                report[name] = warehouse.read(sql, f"verification.{name}")
+        output = ROOT / "artifacts/warehouse-verification.json"
         output.parent.mkdir(exist_ok=True)
         output.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
         print(
             json.dumps(
-                {
-                    key: value
-                    for key, value in report.items()
-                    if key not in ("query_plan", "metadata")
-                },
+                {key: value for key, value in report.items() if key != "query_plan"},
                 indent=2,
             )
         )
@@ -94,8 +85,6 @@ def main():
     except Exception as exc:
         print(f"Verification failed: {type(exc).__name__}. See the database audit log.")
         raise SystemExit(1) from None
-    finally:
-        warehouse.close()
 
 
 if __name__ == "__main__":

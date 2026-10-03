@@ -1,3 +1,5 @@
+> **Archived 2026-10-03.** Describes the previous OpenRouter + PostgreSQL backend, kept as a historical record. Current design: [README](../../README.md), [cloud.md](../cloud.md), [agent-safety.md](../agent-safety.md).
+
 # Verification record — 2026-09-22
 
 ## Confirmed

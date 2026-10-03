@@ -1,4 +1,5 @@
 -- OPTIONAL administrator provisioning, not run automatically by the app.
+-- Use it for the database identity behind the Foundry agent's tools (see docs/agent-safety.md).
 -- Connect ONLY to olist_olap_abd; create a separate LOGIN or Entra principal,
 -- then grant it membership in olist_agent_reader. Never grant the agent ownership.
 -- This grants no INSERT/UPDATE/DELETE/CREATE rights and does not populate OLAP.
@@ -30,4 +31,6 @@ COMMIT;
 -- Administrator follow-up (replace principal name; never put its secret in this file):
 -- GRANT olist_agent_reader TO your_agent_login;
 -- ALTER ROLE your_agent_login SET default_transaction_read_only = on;
+-- ALTER ROLE your_agent_login SET statement_timeout = '15s';
+-- ALTER ROLE your_agent_login SET pgaudit.log = 'read, write, ddl';  -- if pgaudit is enabled
 -- Ensure the login has no other memberships, ownership, or PUBLIC write privileges.

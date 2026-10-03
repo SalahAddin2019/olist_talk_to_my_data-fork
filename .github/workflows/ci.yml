@@ -1,4 +1,4 @@
-name: Verify agent
+name: Verify app
 on: [push, pull_request]
 permissions:
   contents: read
@@ -12,7 +12,7 @@ jobs:
           version: "0.11.9"
           python-version: "3.12"
       - run: uv sync --frozen --extra dev
-      - run: uv run ruff check backend scripts/verify_warehouse.py scripts/evaluate_agent.py
+      - run: uv run ruff check backend scripts
       - run: uv run pytest
       - uses: actions/setup-node@v4
         with:

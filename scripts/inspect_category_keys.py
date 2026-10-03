@@ -1,14 +1,13 @@
-"""Read-only investigation of category relationships; all reads use the audit path."""
+"""Read-only investigation of category relationships; all reads use the audit path.
+
+Run with: uv run --extra warehouse python scripts/inspect_category_keys.py
+"""
 
 import json
-from uuid import uuid4
 
-from app.config import Settings
-from app.warehouse import Warehouse
+from warehouse import Warehouse
 
-warehouse = Warehouse(Settings())
-warehouse.open()
-try:
+with Warehouse() as warehouse:
     for name, sql in {
         "category_paths": """
             SELECT COUNT(*) AS items,
@@ -35,6 +34,4 @@ try:
                 'public.dim_product'::regclass, 'public.dim_category'::regclass)
         """,
     }.items():
-        print(name, json.dumps(warehouse.read(sql, (), uuid4().hex, "diagnostic." + name)))
-finally:
-    warehouse.close()
+        print(name, json.dumps(warehouse.read(sql, "diagnostic." + name)))
