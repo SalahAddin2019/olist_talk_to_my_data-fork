@@ -33,12 +33,7 @@ export default function TurnView({ turn, pending, canRetry, agent, onRetry }: Pr
             <>
               <span className="sr-only">{agent} answered: </span>
               <Answer text={turn.answer} />
-              <Actions
-                text={turn.answer}
-                seconds={turn.seconds}
-                canRetry={canRetry}
-                onRetry={onRetry}
-              />
+              <Actions text={turn.answer} seconds={turn.seconds} />
             </>
           )}
           {turn.stopped && (
@@ -87,17 +82,9 @@ function Thinking({ agent }: { agent: string }) {
   );
 }
 
-function Actions({
-  text,
-  seconds,
-  canRetry,
-  onRetry,
-}: {
-  text: string;
-  seconds?: number;
-  canRetry: boolean;
-  onRetry: () => void;
-}) {
+// Answers are kept in the Foundry conversation, so there is no regenerate: asking again
+// would add a second copy of the question to the stored history.
+function Actions({ text, seconds }: { text: string; seconds?: number }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -121,11 +108,6 @@ function Actions({
         {copied ? <Check aria-hidden="true" size={13} /> : <Copy aria-hidden="true" size={13} />}
         {copied ? 'Copied' : 'Copy'}
       </button>
-      {canRetry && (
-        <button type="button" className={button} onClick={onRetry}>
-          <RotateCcw aria-hidden="true" size={13} /> Regenerate
-        </button>
-      )}
       {seconds !== undefined && (
         <span className="ml-auto text-xs tabular-nums text-ink-3">Answered in {seconds}s</span>
       )}

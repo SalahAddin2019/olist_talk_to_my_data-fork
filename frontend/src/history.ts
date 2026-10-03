@@ -1,28 +1,18 @@
-import type { Message, Turn } from './types';
+import type { ConversationDetail, Turn } from './types';
 
-const MAX_MESSAGES = 20;
-const TRUNCATED = '\n\n[Earlier answer truncated]';
-
-// Newest turns first, within the backend's message and character budget, so a long
-// answer can never make the next question fail.
-export function buildMessages(turns: Turn[], question: string, budget: number): Message[] {
-  const messages: Message[] = [{ role: 'user', content: question }];
-  let remaining = budget - question.length;
-  for (const turn of [...turns].reverse()) {
-    if (!turn.answer) continue;
-    if (messages.length + 2 > MAX_MESSAGES) break;
-    const room = remaining - turn.question.length;
-    let answer = turn.answer;
-    if (answer.length > room) {
-      // Keep the start of the latest answer for context; drop anything older.
-      if (messages.length > 1 || room <= TRUNCATED.length + 200) break;
-      answer = answer.slice(0, room - TRUNCATED.length) + TRUNCATED;
-    }
-    messages.unshift(
-      { role: 'user', content: turn.question },
-      { role: 'assistant', content: answer },
-    );
-    remaining -= turn.question.length + answer.length;
+// Pairs each stored question with the answer that follows it. A question without an
+// answer (stopped or failed) stays as a turn of its own.
+export function toTurns(messages: ConversationDetail['messages']): Turn[] {
+  const turns: Turn[] = [];
+  for (const message of messages) {
+    const last = turns.at(-1);
+    if (message.role === 'user') turns.push({ id: message.id, question: message.content });
+    else if (last && last.answer === undefined) last.answer = message.content;
+    else if (last) last.answer += `\n\n${message.content}`;
   }
-  return messages;
+  return turns;
+}
+
+export function conversationFromUrl(): string | null {
+  return new URLSearchParams(location.search).get('c');
 }

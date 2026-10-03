@@ -40,9 +40,10 @@ a container has no `az login`, so give it a service principal through `AZURE_TEN
 
 ```mermaid
 flowchart LR
-    UI[React UI] -- conversation --> API[FastAPI /api/chat]
-    API -- Responses API + agent_reference --> Agent[Foundry agent olist-agent]
-    Agent --> API --> UI
+    UI[React UI] -- question + conversation ID --> API[FastAPI /api/chat]
+    API -- Responses API + conversation + agent_reference --> Agent[Foundry agent olist-agent]
+    Agent -- stores items --> Conv[(Foundry conversations)]
+    UI -- history --> API2[FastAPI /api/conversations] -- reads --> Conv
 ```
 
 - The backend uses the official [`azure-ai-projects`](https://pypi.org/project/azure-ai-projects/)
@@ -51,8 +52,18 @@ flowchart LR
   [Foundry quickstart](https://learn.microsoft.com/azure/foundry/quickstarts/get-started-code).
 - Authentication is Microsoft Entra ID through `DefaultAzureCredential`. Foundry agents do not
   accept API keys, so no secret is stored in the repository or sent to the browser.
-- The browser keeps the conversation (up to 20 messages) and sends it with each question, so the
-  backend is stateless. Reloading the page or starting a new conversation clears it.
+- Chat history lives only in **Foundry conversations**; neither the app nor the browser stores
+  it. The first question creates a conversation tagged with the caller's ID, the agent name and
+  a title (`metadata.user_id`, `agent`, `title`); each turn is sent with `conversation=<id>`,
+  so Foundry supplies the context and appends the question, tool calls and answer. The browser
+  keeps only the open conversation's ID, in the URL (`?c=conv_…`), so reloads and links work.
+- History endpoints: `GET /api/conversations` (the caller's conversations with this agent,
+  newest first), `GET /api/conversations/{id}` (user and assistant messages, tool items
+  omitted) and `DELETE /api/conversations/{id}`. A conversation owned by another user or
+  agent answers 404, exactly like a missing one. Foundry's project-wide conversation list has
+  no owner filter (and is not in the SDK or REST reference), so the backend pages through it
+  (up to 1,000 conversations) and filters on metadata; a large multi-user deployment would
+  need a per-user index instead.
 - Answers are rendered as Markdown without raw HTML. A table with a numeric column also gets
   a bar chart (shown first, with a Chart/Table toggle and a measure picker when there are
   several numeric columns).
@@ -61,12 +72,13 @@ flowchart LR
   pins light or dark (`public/theme.js` applies it before first paint, as an external file
   because the CSP blocks inline scripts). Inter is self-hosted for the same reason.
 - Conversation UX: suggested questions, a stop button (or Esc) while waiting, an elapsed-time
-  indicator, copy and regenerate on answers, in-place retry on errors, a per-conversation
-  question list in the sidebar, and a `role="log"` conversation region for screen readers.
+  indicator, copy on answers, in-place retry on errors or stops, a conversation history in the
+  sidebar (open, refresh, delete), and a `role="log"` conversation region for screen readers.
+  There is no regenerate: it would store a second copy of the question in Foundry.
 - Foundry errors map to short messages (429 rate limit, 503 authentication, 504 timeout,
   502 other) with a request ID. Questions are never echoed in validation errors or logs.
-- Caller protection: a streaming request byte limit, a conversation character budget (the UI
-  trims older history to fit), a concurrency gate that answers 429 when busy, and ACA
+- Caller protection: a streaming request byte limit, a 4,000-character question limit, a
+  concurrency gate that answers 429 when busy, and ACA
   built-in authentication in production (`APP_ENV=production` refuses to start without it).
   See [docs/cloud.md](docs/cloud.md).
 - Warehouse safety now depends on the agent's tools and database identity. What must be
@@ -80,13 +92,14 @@ flowchart LR
 uv run pytest
 uv run ruff check backend
 cd frontend
-npm test           # unit tests (Vitest): number parsing, chart detection, history budget
+npm test           # unit tests (Vitest): number parsing, chart detection, history pairing
 npm run build
 npm run test:e2e   # needs the built app running on port 8000 (or BASE_URL) and Microsoft Edge
 ```
 
-`backend/tests/test_foundry.py` checks the exact request sent to Foundry (URL, Entra token
-scope and `agent_reference` body) against a mocked transport. Browser tests use API fixtures,
+`backend/tests/test_foundry.py` checks the exact requests sent to Foundry (URL, Entra token
+scope, conversation metadata, `conversation` + `agent_reference` body, owner checks, list
+paging and item filtering) against a mocked transport. Browser tests use API fixtures,
 so they do not call Foundry.
 
 Live checks (use the `PG*` and Foundry settings in `.env`; the evaluation uses model quota):

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { numericSeries, parseNumber } from './table';
-import { buildMessages } from './history';
+import { toTurns } from './history';
 
 describe('parseNumber', () => {
   it.each([
@@ -37,16 +37,19 @@ describe('numericSeries', () => {
   });
 });
 
-describe('buildMessages', () => {
-  it('keeps history within the character budget', () => {
-    const turns = [1, 2, 3].map((n) => ({
-      id: `${n}`,
-      question: `q${n}`,
-      answer: 'x'.repeat(9000),
-    }));
-    const messages = buildMessages(turns, 'next', 24000);
-    const size = messages.reduce((total, message) => total + message.content.length, 0);
-    expect(size).toBeLessThanOrEqual(24000);
-    expect(messages.at(-1)).toEqual({ role: 'user', content: 'next' });
+describe('toTurns', () => {
+  it('pairs questions with answers and keeps unanswered questions', () => {
+    const turns = toTurns([
+      { id: 'm1', role: 'user', content: 'Total revenue?' },
+      { id: 'm2', role: 'assistant', content: 'R$ 13.6M' },
+      { id: 'm3', role: 'user', content: 'Stopped question' },
+      { id: 'm4', role: 'user', content: 'Only 2018' },
+      { id: 'm5', role: 'assistant', content: 'R$ 7.4M' },
+    ]);
+    expect(turns).toEqual([
+      { id: 'm1', question: 'Total revenue?', answer: 'R$ 13.6M' },
+      { id: 'm3', question: 'Stopped question' },
+      { id: 'm4', question: 'Only 2018', answer: 'R$ 7.4M' },
+    ]);
   });
 });

@@ -8,7 +8,6 @@ interface Props {
   value: string;
   busy: boolean;
   followUp: boolean;
-  contextTurns: number;
   onChange: (value: string) => void;
   onSubmit: () => void;
   onStop: () => void;
@@ -19,7 +18,6 @@ export default function Composer({
   value,
   busy,
   followUp,
-  contextTurns,
   onChange,
   onSubmit,
   onStop,
@@ -61,10 +59,8 @@ export default function Composer({
       />
       <div className="flex items-center gap-3 px-2 pb-0.5">
         <p className="m-0 min-w-0 flex-1 truncate text-xs text-ink-3">
-          {contextTurns
-            ? contextTurns === 1
-              ? 'Follow-ups use the previous answer as context'
-              : `Follow-ups use the last ${contextTurns} answers as context`
+          {followUp
+            ? 'Follow-ups use this conversation as context'
             : 'Read-only · answered from the Olist warehouse'}
         </p>
         {value.length > MAX_LENGTH * 0.8 && (

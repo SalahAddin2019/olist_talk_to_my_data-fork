@@ -1,14 +1,28 @@
-import { BarChart3, Bot, Database, MessageSquareText, Plus, ShieldCheck } from 'lucide-react';
-import type { Health, Turn } from '../types';
+import {
+  BarChart3,
+  Bot,
+  Database,
+  MessageSquareText,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react';
+import type { ConversationSummary, Health } from '../types';
 import ThemeToggle from './ThemeToggle';
 
 const tables = ['Orders', 'Products', 'Categories', 'Sellers', 'Customers', 'Geography', 'Dates'];
 
 interface Props {
   health: Health | null;
-  turns: Turn[];
+  conversations: ConversationSummary[] | null;
+  historyError: string;
+  activeId: string | null;
   busy: boolean;
   onNew: () => void;
+  onOpen: (id: string) => void;
+  onDelete: (id: string) => void;
+  onReload: () => void;
 }
 
 export function Brand() {
@@ -47,7 +61,17 @@ export function NewChatButton({
   );
 }
 
-export default function Sidebar({ health, turns, busy, onNew }: Props) {
+export default function Sidebar({
+  health,
+  conversations,
+  historyError,
+  activeId,
+  busy,
+  onNew,
+  onOpen,
+  onDelete,
+  onReload,
+}: Props) {
   const online = health?.configured;
   return (
     <aside className="fixed inset-y-0 left-0 hidden w-72 flex-col border-r border-line bg-surface/60 backdrop-blur-xl lg:flex">
@@ -59,26 +83,61 @@ export default function Sidebar({ health, turns, busy, onNew }: Props) {
         <NewChatButton busy={busy} onNew={onNew} />
       </div>
 
-      <nav aria-label="This conversation" className="mt-6 min-h-0 flex-1 overflow-y-auto px-4">
-        <h2 className="px-2 pb-2 text-[0.6875rem] font-semibold tracking-wider text-ink-3 uppercase">
-          This conversation
+      <nav aria-label="Conversation history" className="mt-6 min-h-0 flex-1 overflow-y-auto px-4">
+        <h2 className="flex items-center justify-between px-2 pb-2 text-[0.6875rem] font-semibold tracking-wider text-ink-3 uppercase">
+          History
+          <button
+            type="button"
+            onClick={onReload}
+            aria-label="Refresh history"
+            className="rounded p-0.5 transition-colors hover:text-ink"
+          >
+            <RefreshCw aria-hidden="true" size={12} />
+          </button>
         </h2>
-        {turns.length ? (
+        {historyError ? (
+          <p className="px-2 text-sm text-ink-3">Could not load your conversations.</p>
+        ) : conversations === null ? (
+          <p className="px-2 text-sm text-ink-3">Loading…</p>
+        ) : conversations.length ? (
           <ol className="space-y-0.5">
-            {turns.map((turn) => (
-              <li key={turn.id}>
-                <a
-                  href={`#turn-${turn.id}`}
-                  className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
-                >
-                  <MessageSquareText aria-hidden="true" size={14} className="shrink-0 text-ink-3" />
-                  <span className="truncate">{turn.question}</span>
-                </a>
-              </li>
-            ))}
+            {conversations.map((conversation) => {
+              const active = conversation.id === activeId;
+              return (
+                <li key={conversation.id} className="group relative">
+                  <a
+                    href={`?c=${encodeURIComponent(conversation.id)}`}
+                    aria-current={active ? 'page' : undefined}
+                    aria-disabled={busy || undefined}
+                    onClick={(event) => {
+                      if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+                      event.preventDefault();
+                      onOpen(conversation.id);
+                    }}
+                    className={`flex items-center gap-2 rounded-lg py-1.5 pr-8 pl-2 text-sm transition-colors hover:bg-surface-2 hover:text-ink ${active ? 'bg-surface-2 font-medium text-ink' : 'text-ink-2'} ${busy ? 'pointer-events-none opacity-60' : ''}`}
+                  >
+                    <MessageSquareText
+                      aria-hidden="true"
+                      size={14}
+                      className="shrink-0 text-ink-3"
+                    />
+                    <span className="truncate">{conversation.title}</span>
+                  </a>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onDelete(conversation.id)}
+                    aria-label={`Delete conversation: ${conversation.title}`}
+                    className="absolute top-1/2 right-1 grid size-6 -translate-y-1/2 place-items-center rounded-md text-ink-3 opacity-0 transition-opacity group-hover:opacity-100 hover:text-danger-ink focus-visible:opacity-100 disabled:hidden"
+                  >
+                    <Trash2 aria-hidden="true" size={13} />
+                  </button>
+                </li>
+              );
+            })}
           </ol>
         ) : (
-          <p className="px-2 text-sm text-ink-3">Your questions will appear here.</p>
+          <p className="px-2 text-sm text-ink-3">Your conversations will appear here.</p>
         )}
 
         <h2 className="mt-7 flex items-center gap-1.5 px-2 pb-2 text-[0.6875rem] font-semibold tracking-wider text-ink-3 uppercase">

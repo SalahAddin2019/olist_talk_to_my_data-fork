@@ -1,7 +1,7 @@
 # Deploying to Azure
 
 The app is one stateless container: FastAPI serves the built React UI and forwards each
-conversation to the Foundry agent. The earlier OpenRouter/PostgreSQL design is archived in
+question to the Foundry agent. Chat history is stored only in Foundry conversations. The earlier OpenRouter/PostgreSQL design is archived in
 [archive/cloud.md](archive/cloud.md).
 
 ## Already implemented
@@ -11,9 +11,11 @@ conversation to the Foundry agent. The earlier OpenRouter/PostgreSQL design is a
 - Caller authentication mode for Azure Container Apps (ACA) built-in auth, enforced by a
   startup guard: `APP_ENV=production` refuses to start unless `AUTH_MODE=azure_container_apps`
   and `ALLOWED_HOSTS` is explicit.
-- Streaming request byte limit (`MAX_REQUEST_BYTES`), conversation budget
-  (`MAX_CONVERSATION_CHARS`), and a per-process concurrency gate (`MAX_CONCURRENT_REQUESTS`)
-  that answers 429 when saturated.
+- Streaming request byte limit (`MAX_REQUEST_BYTES`), a 4,000-character question limit, and a
+  per-process concurrency gate (`MAX_CONCURRENT_REQUESTS`) that answers 429 when saturated.
+- Conversation history is scoped to the signed-in caller: conversations carry
+  `metadata.user_id` = `x-ms-client-principal-id`, and every read, follow-up and delete checks it.
+  This makes ACA authentication (step 2) a requirement for privacy, not only for access.
 - Request IDs, no question text in logs or validation errors, non-root container, health check.
 
 ## Deployment sequence (not yet provisioned)

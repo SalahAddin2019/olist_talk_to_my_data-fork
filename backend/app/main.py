@@ -1,49 +1,60 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import uuid4
 
 import openai
 from azure.core.exceptions import ClientAuthenticationError
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Path, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app.config import ROOT, Settings
-from app.foundry import FoundryAgent
+from app.foundry import ConversationNotFound, FoundryAgent
 
 logger = logging.getLogger("olist.api")
 
 
-class Message(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    role: Literal["user", "assistant"]
-    # Size is bounded by the request byte limit and the conversation budget.
-    content: str = Field(min_length=1)
-
-
-def ends_with_question(messages: list[Message]) -> list[Message]:
-    if messages[-1].role != "user" or not messages[-1].content.strip():
-        raise ValueError("The last message must be a non-empty user question.")
-    return messages
+MAX_QUESTION_CHARS = 4000
+CONVERSATION_ID = r"^conv_[A-Za-z0-9_-]{1,200}$"
+ConversationId = Annotated[str, Path(pattern=CONVERSATION_ID)]
 
 
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    messages: Annotated[
-        list[Message], Field(min_length=1, max_length=20), AfterValidator(ends_with_question)
+    question: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_QUESTION_CHARS)
     ]
+    # Omitted for the first question; Foundry then starts a conversation.
+    conversation_id: Annotated[str | None, Field(pattern=CONVERSATION_ID)] = None
 
 
 class ChatResponse(BaseModel):
     request_id: str
+    conversation_id: str
     answer: str
+
+
+class ConversationSummary(BaseModel):
+    id: str
+    title: str
+    created_at: int
+
+
+class ConversationMessage(BaseModel):
+    id: str
+    role: str
+    content: str
+
+
+class ConversationDetail(BaseModel):
+    id: str
+    messages: list[ConversationMessage]
 
 
 # Starlette picks the most specific handler, so APIError only catches what is left.
@@ -118,10 +129,31 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
             content={"error": message, "request_id": request.state.request_id},
         )
 
+    def caller(request: Request) -> str:
+        # Conversations are tagged with this ID in Foundry and only shown to the same caller.
+        if settings.auth_mode == "azure_container_apps":
+            return request.headers["x-ms-client-principal-id"]
+        return "local"
+
+    def foundry(request: Request) -> FoundryAgent:
+        if request.app.state.agent is None:
+            raise HTTPException(
+                503,
+                "Foundry is not configured. Set FOUNDRY_PROJECT_ENDPOINT and "
+                "FOUNDRY_AGENT_NAME in the backend environment and restart the server.",
+            )
+        return request.app.state.agent
+
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError):
         # The default handler echoes the input back; questions may be sensitive.
-        return error(request, 422, "Send 1–20 messages ending with a non-empty question.")
+        if request.url.path == "/api/chat":
+            return error(request, 422, "Send a non-empty question of up to 4,000 characters.")
+        return error(request, 422, "Invalid request.")
+
+    @app.exception_handler(ConversationNotFound)
+    async def conversation_not_found(request: Request, exc: ConversationNotFound):
+        return error(request, 404, "Conversation not found. It may have been deleted.")
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
@@ -146,19 +178,11 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
             "status": "ok",
             "configured": settings.configured,
             "agent": settings.foundry_agent_name or None,
-            "max_conversation_chars": settings.max_conversation_chars,
         }
 
     @app.post("/api/chat", response_model=ChatResponse)
     async def chat(body: ChatRequest, request: Request):
-        if request.app.state.agent is None:
-            raise HTTPException(
-                503,
-                "Foundry is not configured. Set FOUNDRY_PROJECT_ENDPOINT and "
-                "FOUNDRY_AGENT_NAME in the backend environment and restart the server.",
-            )
-        if sum(len(message.content) for message in body.messages) > settings.max_conversation_chars:
-            raise HTTPException(413, "This conversation is too long. Start a new conversation.")
+        agent = foundry(request)
         if gate.locked():
             raise HTTPException(
                 429,
@@ -166,12 +190,27 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
                 headers={"Retry-After": "3"},
             )
         async with gate:
-            answer = await request.app.state.agent.ask(
-                [message.model_dump() for message in body.messages]
+            conversation_id, answer = await agent.ask(
+                body.question, body.conversation_id, caller(request)
             )
         if not answer.strip():
             raise HTTPException(502, "The Foundry agent returned an empty answer. Try again.")
-        return ChatResponse(request_id=request.state.request_id, answer=answer)
+        return ChatResponse(
+            request_id=request.state.request_id, conversation_id=conversation_id, answer=answer
+        )
+
+    @app.get("/api/conversations", response_model=list[ConversationSummary])
+    async def list_conversations(request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 50):
+        return await foundry(request).conversations(caller(request), limit)
+
+    @app.get("/api/conversations/{conversation_id}", response_model=ConversationDetail)
+    async def get_conversation(conversation_id: ConversationId, request: Request):
+        messages = await foundry(request).messages(conversation_id, caller(request))
+        return ConversationDetail(id=conversation_id, messages=messages)
+
+    @app.delete("/api/conversations/{conversation_id}", status_code=204)
+    async def delete_conversation(conversation_id: ConversationId, request: Request):
+        await foundry(request).delete(conversation_id, caller(request))
 
     # One same-origin container in production, Vite proxy during local development.
     frontend = ROOT / "frontend/dist"

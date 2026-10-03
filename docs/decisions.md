@@ -92,3 +92,14 @@ and data rules now live in the agent. Caller authentication, request byte and co
 limits and a concurrency gate stay in the backend. The warehouse check scripts and reader
 role are kept, the earlier design docs are archived under `docs/archive/`, and the agent's
 safety requirements and live evaluation are in `docs/agent-safety.md`.
+
+## 2026-10-03 — Chat history lives in Foundry conversations
+
+Users can reopen past conversations. Instead of adding a database, the backend creates a
+Foundry conversation on the first question (metadata: caller ID, agent name, title) and
+answers every turn with `conversation=<id>`, so Foundry holds the context and the transcript.
+The browser keeps only the open conversation's ID (in the URL). History is read back with the
+conversation items API; the list comes from Foundry's project-wide conversation list filtered
+by metadata in the backend, because Foundry has no owner filter. The browser-side history
+budget (`MAX_CONVERSATION_CHARS`) was removed. Trade-off: listing scans the project's
+conversations (capped at 1,000), which suits one team, not a large multi-tenant deployment.
