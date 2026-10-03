@@ -12,8 +12,7 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 UV_COMPILE_BYTECODE=1 PATH="/app/.venv/bin:$PATH"
 COPY pyproject.toml uv.lock ./
 COPY backend/ ./backend/
-RUN uv sync --frozen --no-dev --extra azure && useradd --create-home --uid 10001 appuser \
-    && mkdir -p /app/logs && chown -R appuser:appuser /app/logs
+RUN uv sync --frozen --no-dev && useradd --create-home --uid 10001 appuser
 COPY --from=frontend /build/dist ./frontend/dist/
 USER appuser
 EXPOSE 8000

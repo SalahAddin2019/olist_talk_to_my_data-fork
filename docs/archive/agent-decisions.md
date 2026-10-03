@@ -1,3 +1,5 @@
+> **Archived 2026-10-03.** Describes the previous OpenRouter + PostgreSQL backend, kept as a historical record. Current design: [README](../../README.md), [cloud.md](../cloud.md), [agent-safety.md](../agent-safety.md).
+
 # Agent engineering decisions
 
 Research date: 2026-09-22. Scope: local first, existing Azure PostgreSQL warehouse, React, FastAPI, GPT-4.1 nano. The user clarified that their credential is an OpenRouter key; the final default uses `OPENROUTER_API_KEY` and model `openai/gpt-4.1-nano`. “Supported” means implemented in the app; “deferred” means researched and documented, not provisioned or enabled on Azure. No new Azure resources, extensions, tables, or server settings were created for this build.
