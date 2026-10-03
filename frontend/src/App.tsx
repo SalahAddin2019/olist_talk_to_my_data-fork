@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
+import { LoaderCircle, Menu, RefreshCw, TriangleAlert } from 'lucide-react';
 import { request } from './api';
 import Composer from './components/Composer';
 import EmptyState from './components/EmptyState';
-import Sidebar, { Brand, NewChatButton } from './components/Sidebar';
-import ThemeToggle from './components/ThemeToggle';
+import Sidebar, { Brand, MobileSidebar, NewChatButton } from './components/Sidebar';
 import TurnView from './components/TurnView';
 import { conversationFromUrl, toTurns } from './history';
 import type {
@@ -41,6 +40,8 @@ export default function App() {
   const [historyError, setHistoryError] = useState('');
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const openRef = useRef<AbortController | null>(null);
@@ -134,6 +135,7 @@ export default function App() {
 
   function open(id: string | null) {
     if (busy) return;
+    setMenuOpen(false);
     if (id !== conversationId) history.pushState(null, '', conversationUrl(id));
     void load(id);
     inputRef.current?.focus();
@@ -201,27 +203,40 @@ export default function App() {
     open(null);
   }
 
+  const sidebar = {
+    health,
+    conversations,
+    historyError,
+    activeId: conversationId,
+    busy,
+    onNew: reset,
+    onOpen: open,
+    onDelete: (id: string) => void remove(id),
+    onReload: () => void loadConversations(),
+  };
+
   return (
     <div className="min-h-dvh">
-      <Sidebar
-        health={health}
-        conversations={conversations}
-        historyError={historyError}
-        activeId={conversationId}
-        busy={busy}
-        onNew={reset}
-        onOpen={open}
-        onDelete={(id) => void remove(id)}
-        onReload={() => void loadConversations()}
-      />
+      <Sidebar {...sidebar} />
+      <MobileSidebar {...sidebar} open={menuOpen} onClose={closeMenu} />
 
       <div className="flex min-h-dvh flex-col lg:pl-72">
-        <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-line bg-bg/80 px-4 backdrop-blur-xl lg:hidden">
-          <Brand />
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <NewChatButton busy={busy} onNew={reset} compact />
+        <header className="sticky top-0 z-20 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center justify-between gap-3 border-b border-line bg-bg/80 px-2 pt-[env(safe-area-inset-top)] backdrop-blur-xl sm:px-4 lg:hidden">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setMenuOpen(true)}
+              aria-label="Open menu"
+              aria-haspopup="dialog"
+              aria-expanded={menuOpen}
+              aria-controls="mobile-menu"
+              className="grid size-10 place-items-center rounded-xl text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <Menu aria-hidden="true" size={20} />
+            </button>
+            <Brand />
           </div>
+          <NewChatButton busy={busy} onNew={reset} compact />
         </header>
 
         <main className="relative flex flex-1 flex-col">
