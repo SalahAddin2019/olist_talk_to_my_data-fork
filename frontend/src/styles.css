@@ -74,7 +74,14 @@
     font-family: var(--font-sans);
     font-feature-settings: 'cv11', 'ss01';
     -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
     scrollbar-gutter: stable;
+  }
+  /* Keep the page still behind the open mobile menu. */
+  html:has(dialog[open]) {
+    overflow: hidden;
   }
   body {
     margin: 0;
@@ -126,6 +133,15 @@
     background: linear-gradient(90deg, var(--surface-2) 0%, var(--line) 50%, var(--surface-2) 100%)
       0 0 / 200% 100%;
     animation: var(--animate-shimmer);
+  }
+  /* The mobile menu slides in from the left. */
+  .drawer[open] {
+    animation: drawer 0.25s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  @keyframes drawer {
+    from {
+      translate: -100% 0;
+    }
   }
   /* Grows with its content; the JS fallback in Composer handles older engines. */
   .auto-grow {

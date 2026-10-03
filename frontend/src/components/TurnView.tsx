@@ -13,7 +13,10 @@ interface Props {
 
 export default function TurnView({ turn, pending, canRetry, agent, onRetry }: Props) {
   return (
-    <article id={`turn-${turn.id}`} className="turn animate-rise scroll-mt-6 space-y-5">
+    <article
+      id={`turn-${turn.id}`}
+      className="turn animate-rise scroll-mt-20 space-y-5 lg:scroll-mt-6"
+    >
       <div className="flex justify-end">
         <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-accent-soft px-4 py-2.5 text-[0.9375rem] leading-relaxed text-ink [overflow-wrap:anywhere]">
           <span className="sr-only">You asked: </span>

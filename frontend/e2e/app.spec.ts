@@ -139,6 +139,44 @@ test('mobile layout fits the viewport', async ({ page }) => {
   expect(overflow).toBe(false);
 });
 
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('history opens from the mobile menu', async ({ page }) => {
+    await page.route('**/api/conversations', (route) =>
+      route.fulfill({ json: [{ id: 'conv_1', title: 'Total revenue?', created_at: 1 }] }),
+    );
+    await page.route('**/api/conversations/conv_1', (route) =>
+      route.fulfill({
+        json: {
+          id: 'conv_1',
+          messages: [
+            { id: 'm1', role: 'user', content: 'Total revenue?' },
+            { id: 'm2', role: 'assistant', content: 'Total revenue is **R$ 13.6M**.' },
+          ],
+        },
+      }),
+    );
+    await page.goto('/');
+    const menu = page.getByRole('dialog', { name: 'Menu' });
+    await expect(menu).toBeHidden();
+    await page.getByRole('button', { name: 'Open menu' }).click();
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('button', { name: /Delete conversation/ })).toHaveCSS(
+      'opacity',
+      '1',
+    );
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+    await page.getByRole('button', { name: 'Open menu' }).click();
+    await menu.getByRole('link', { name: 'Total revenue?' }).click();
+    await expect(menu).toBeHidden();
+    await expect(page.getByText('R$ 13.6M')).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+    expect(overflow).toBe(false);
+  });
+});
+
 test('numeric tables render as a chart with a table view', async ({ page }) => {
   await page.route('**/api/chat', (route) =>
     route.fulfill({
