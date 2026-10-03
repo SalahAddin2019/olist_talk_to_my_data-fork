@@ -99,3 +99,45 @@ test('mobile layout fits the viewport', async ({ page }) => {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
   expect(overflow).toBe(false);
 });
+
+test('numeric tables render as a chart with a table view', async ({ page }) => {
+  await page.route('**/api/chat', (route) =>
+    route.fulfill({
+      json: {
+        request_id: 'fixture',
+        answer:
+          '| State | Orders | Revenue |\n| --- | --- | --- |\n| SP | 41,746 | R$ 5,998,226.96 |\n| RJ | 12,852 | R$ 2,144,379.69 |\n| MG | 11,635 | R$ 1,872,257.26 |',
+      },
+    }),
+  );
+  await page.goto('/');
+  await page.getByRole('button', { name: /Which states have the most orders/ }).click();
+  const chart = page.getByRole('list', { name: 'Orders by State' });
+  await expect(chart.getByRole('listitem')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Revenue' }).click();
+  await expect(page.getByRole('list', { name: 'Revenue by State' })).toContainText(
+    'R$ 5,998,226.96',
+  );
+  await page.getByRole('button', { name: 'Table' }).click();
+  await expect(page.getByRole('cell', { name: 'R$ 2,144,379.69' })).toBeVisible();
+});
+
+test('a pending question can be stopped and asked again', async ({ page }) => {
+  await page.route('**/api/chat', () => new Promise(() => {}));
+  await page.goto('/');
+  await page.getByRole('textbox').fill('Total revenue?');
+  await page.getByRole('button', { name: 'Send question' }).click();
+  await expect(page.locator('.thinking')).toBeVisible();
+  await page.getByRole('button', { name: 'Stop waiting for the answer' }).click();
+  await expect(page.getByText('Stopped before the agent answered.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ask again' })).toBeEnabled();
+});
+
+test('theme can be pinned and persists across reloads', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('radio', { name: 'Dark theme' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.getByRole('radio', { name: 'Dark theme' })).toBeChecked();
+});
