@@ -4,7 +4,7 @@ import httpx
 import openai
 import pytest
 from app.config import Settings
-from app.foundry import ConversationNotFound
+from app.foundry import AnswerIncomplete, ArtifactNotFound, ArtifactTooLarge, ConversationNotFound
 from app.main import create_app
 from azure.core.exceptions import ClientAuthenticationError
 from fastapi.testclient import TestClient
@@ -232,3 +232,56 @@ def test_concurrent_calls_beyond_the_limit_are_rejected():
     statuses = sorted(response.status_code for response in asyncio.run(burst()))
     assert statuses == [200, 200] + [429] * 6
     assert SlowAgent.peak == 2
+
+
+def test_chart_and_csv_download_headers_and_caller():
+    class FileAgent(FakeAgent):
+        async def artifact(self, conversation_id, container_id, file_id, user):
+            self.owned(conversation_id, user)
+            self.received = (conversation_id, container_id, file_id, user)
+            return (
+                (b"png", "monthly revenue.png")
+                if file_id == "chart"
+                else (b"month,revenue\n2018-01,100.25\n", "revenue.csv")
+            )
+
+    agent = FileAgent()
+    agent.store["conv_1"] = ("alice", [])
+    config = settings(app_env="production", auth_mode="azure_container_apps")
+    url = "/api/conversations/conv_1/files/cntr_1/chart"
+    with client(agent, config) as api:
+        assert api.get(url).status_code == 401
+        assert api.get(url, headers={"x-ms-client-principal-id": "bob"}).status_code == 404
+        alice = {"x-ms-client-principal-id": "alice"}
+        preview = api.get(url, headers=alice)
+        assert preview.status_code == 200 and preview.content == b"png"
+        assert preview.headers["content-type"] == "image/png"
+        assert preview.headers["content-disposition"].startswith("inline;")
+        assert preview.headers["cache-control"] == "no-store"
+        assert agent.received == ("conv_1", "cntr_1", "chart", "alice")
+        download = api.get(url + "?download=true", headers=alice)
+        assert download.headers["content-disposition"].startswith("attachment;")
+        assert "monthly%20revenue.png" in download.headers["content-disposition"]
+        csv = api.get(url.replace("chart", "csv"), headers=alice)
+        assert csv.headers["content-type"].startswith("text/csv")
+        assert csv.headers["content-disposition"].startswith("attachment;")
+
+
+@pytest.mark.parametrize(
+    "error,status",
+    [(ArtifactNotFound(), 404), (ArtifactTooLarge(), 413), (AnswerIncomplete(), 502)],
+)
+def test_artifact_and_incomplete_errors_are_actionable(error, status):
+    class FileAgent(FakeAgent):
+        async def artifact(self, *args):
+            raise error
+
+    with client(FileAgent(error=error)) as api:
+        path = (
+            "/api/chat"
+            if isinstance(error, AnswerIncomplete)
+            else ("/api/conversations/conv_1/files/cntr_1/cfile_1")
+        )
+        response = api.post(path, json=QUESTION) if path == "/api/chat" else api.get(path)
+        assert response.status_code == status
+        assert response.json()["request_id"] == response.headers["X-Request-ID"]

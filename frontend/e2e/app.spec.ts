@@ -200,6 +200,89 @@ test('numeric tables render as a chart with a table view', async ({ page }) => {
   await expect(page.getByRole('cell', { name: 'R$ 2,144,379.69' })).toBeVisible();
 });
 
+test('generated charts and downloads survive reopening a conversation', async ({ page }) => {
+  const file = '/api/conversations/conv_chart/files/cntr_1/cfile_1';
+  const csv = '/api/conversations/conv_chart/files/cntr_1/cfile_2';
+  const answer = `Monthly revenue, delivered orders, excluding freight.\n\n![Monthly revenue](${file})\n\n[Download PNG](${file}?download=true)\n\n[Download CSV](${csv}?download=true)`;
+  await page.route('**/api/chat', (route) =>
+    route.fulfill({ json: { request_id: 'fixture', conversation_id: 'conv_chart', answer } }),
+  );
+  await page.route('**/api/conversations/conv_chart', (route) =>
+    route.fulfill({
+      json: {
+        id: 'conv_chart',
+        messages: [
+          { id: 'm1', role: 'user', content: 'Chart monthly revenue' },
+          { id: 'm2', role: 'assistant', content: answer },
+        ],
+      },
+    }),
+  );
+  await page.route('**/api/conversations/conv_chart/files/**', (route) => {
+    const url = new URL(route.request().url());
+    const isCsv = url.pathname === csv;
+    return route.fulfill({
+      contentType: isCsv ? 'text/csv' : 'image/png',
+      headers: url.searchParams.has('download')
+        ? {
+            'Content-Disposition': `attachment; filename="${isCsv ? 'revenue.csv' : 'revenue.png'}"`,
+          }
+        : {},
+      body: isCsv
+        ? 'month,revenue\n2018-01,100.25\n'
+        : Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZ9sAAAAASUVORK5CYII=',
+            'base64',
+          ),
+    });
+  });
+  await page.goto('/');
+  await page.getByRole('textbox').fill('Chart monthly revenue');
+  await page.getByRole('button', { name: 'Send question' }).click();
+  const image = page.getByRole('img', { name: 'Monthly revenue' });
+  await expect(image).toBeVisible();
+  await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1);
+  await expect(page.getByRole('link', { name: 'Download PNG' })).toHaveAttribute(
+    'href',
+    `${file}?download=true`,
+  );
+  await expect(page.getByRole('link', { name: 'Download CSV' })).toHaveAttribute(
+    'href',
+    `${csv}?download=true`,
+  );
+  for (const format of ['PNG', 'CSV']) {
+    const downloading = page.waitForEvent('download');
+    await page.getByRole('link', { name: `Download ${format}` }).click();
+    const download = await downloading;
+    expect(download.suggestedFilename()).toBe(`revenue.${format.toLowerCase()}`);
+    expect(await download.failure()).toBeNull();
+  }
+  await page.reload();
+  await expect(image).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Download CSV' })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
+
+test('expired charts show an actionable message', async ({ page }) => {
+  const file = '/api/conversations/conv_chart/files/cntr_1/cfile_1';
+  await page.route(`**${file}`, (route) => route.fulfill({ status: 404, body: 'Expired' }));
+  await page.route('**/api/chat', (route) =>
+    route.fulfill({
+      json: {
+        request_id: 'fixture',
+        conversation_id: 'conv_chart',
+        answer: `![Revenue](${file})`,
+      },
+    }),
+  );
+  await page.goto('/');
+  await page.getByRole('textbox').fill('Chart revenue');
+  await page.getByRole('button', { name: 'Send question' }).click();
+  await expect(page.getByRole('status')).toContainText('Ask for a fresh chart');
+  await expect(page.getByRole('img', { name: 'Revenue' })).toHaveCount(0);
+});
+
 test('a pending question can be stopped and asked again', async ({ page }) => {
   await page.route('**/api/chat', () => new Promise(() => {}));
   await page.goto('/');

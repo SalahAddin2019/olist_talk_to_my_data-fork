@@ -103,3 +103,26 @@ conversation items API; the list comes from Foundry's project-wide conversation 
 by metadata in the backend, because Foundry has no owner filter. The browser-side history
 budget (`MAX_CONVERSATION_CHARS`) was removed. Trade-off: listing scans the project's
 conversations (capped at 1,000), which suits one team, not a large multi-tenant deployment.
+
+## 2026-10-03 — Version 16 agent source and generated visualizations
+
+The user-supplied `olist-agent:16` export is the basis for the editable prompt-agent
+YAML. Keep one Markdown instruction source and embed it with the offline sync script;
+Foundry assigns the deployed version. Preserve the supplied model, MCP connection,
+read-only shared reference database, and automatic Code Interpreter container. Narrow
+the local MCP allowlist to the three analytics read tools. No warehouse model or ETL
+change is involved, and no database interaction was made during this implementation.
+
+Code Interpreter produces PNG charts and aggregate CSVs from verified query results.
+The backend translates trusted assistant file citations into same-origin links for
+both immediate answers and history. File retrieval checks conversation owner, agent,
+and exact citation before reading Foundry container content; it is bounded to 10 MB
+and the existing concurrency limit. Generated files stay in Foundry and may expire.
+The UI shows failed-preview guidance and download links. Incomplete responses and
+unsupported approval requests are errors rather than completed business answers.
+
+The enhanced draft adds period comparisons, repeat-buyer metrics, mapping coverage,
+bounded query correction, and export instructions. These prompt policies still require
+live evaluation and server-side enforcement where appropriate. The repo source does
+not automatically deploy or pin a new remote version; apply and review it in Foundry
+before updating `FOUNDRY_AGENT_VERSION`.

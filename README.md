@@ -67,6 +67,11 @@ flowchart LR
 - Answers are rendered as Markdown without raw HTML. A table with a numeric column also gets
   a bar chart (shown first, with a Chart/Table toggle and a measure picker when there are
   several numeric columns).
+- The version-16-based agent draft includes Code Interpreter for PNG charts and aggregate
+  CSV exports. The app translates its file citations into conversation-protected previews
+  and downloads, including when history is reopened. Files may expire; downloads are capped
+  at 10 MB. See [the editable agent configuration](microsoft_foundry/README.md) for instructions,
+  local YAML checks, and applying the draft in Foundry.
 - The UI is React 19 + Tailwind CSS v4 (CSS-first `@theme`, no config file) with semantic
   OKLCH color tokens defined once through `light-dark()`. It follows the OS theme; the toggle
   pins light or dark (`public/theme.js` applies it before first paint, as an external file
@@ -91,6 +96,7 @@ flowchart LR
 ```powershell
 uv run pytest
 uv run ruff check backend
+uv run python scripts/sync_foundry_agent.py
 cd frontend
 npm test           # unit tests (Vitest): number parsing, chart detection, history pairing
 npm run build

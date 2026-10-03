@@ -12,12 +12,16 @@ import {
 const suggestions: { tag: string; question: string; icon: LucideIcon }[] = [
   { tag: 'Performance', question: 'What is our total revenue and order count?', icon: TrendingUp },
   { tag: 'Products', question: 'Which 5 categories generate the most revenue?', icon: Package },
-  { tag: 'Trends', question: 'Show monthly revenue for 2018.', icon: CalendarRange },
+  {
+    tag: 'Trends',
+    question: 'Chart monthly revenue for 2018 and provide the underlying CSV.',
+    icon: CalendarRange,
+  },
   { tag: 'Customers', question: 'Which states have the most orders?', icon: MapPin },
   { tag: 'Sellers', question: 'Who are the top 10 sellers by revenue?', icon: Store },
   {
     tag: 'Shipping',
-    question: 'Which categories have the highest average freight cost?',
+    question: 'Compare merchandise revenue and freight costs by month in 2018.',
     icon: Truck,
   },
 ];
@@ -40,7 +44,7 @@ export default function EmptyState({
       </h1>
       <p className="mt-4 mb-8 max-w-xl text-base sm:mb-10 text-pretty text-ink-2 sm:text-lg">
         Ask about revenue, products, sellers, customers and shipping costs in plain language.
-        Answers come straight from the Olist warehouse — tables turn into charts automatically.
+        Explore warehouse results with charts, period comparisons and downloadable data.
       </p>
       <h2 className="mb-3 text-xs font-semibold tracking-wide text-ink-3 uppercase">Try asking</h2>
       <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
