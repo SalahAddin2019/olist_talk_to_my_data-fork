@@ -6,6 +6,11 @@ and automatic Code Interpreter container. It adds an explicit three-tool MCP
 allowlist and enhanced analytics/visualization instructions. Service-generated
 version and identity fields are omitted; duplicate export blocks are consolidated.
 
+The YAML definition, sync script, configuration tests, and manual smoke-case file
+were subsequently removed. Only
+[agent_instructions.md](../microsoft_foundry/agent_instructions.md) remains in the
+Foundry folder. The results below record validation before that cleanup.
+
 ## Checks performed
 
 | Check | Result |
@@ -46,6 +51,7 @@ are prompt policies that need service/database enforcement and live evaluation. 
 download ownership, citation binding, supported file types, concurrency, and the 10 MB
 limit are enforced in code. Generated Foundry files can expire.
 
-Apply the draft and pin the resulting reviewed version using
-[the agent README](../microsoft_foundry/README.md). Version 16 remains the source
+Copy [the agent instructions](../microsoft_foundry/agent_instructions.md) into the
+Foundry portal's Instructions field, save a reviewed version, and pin that version
+with `FOUNDRY_AGENT_VERSION`. Version 16 remains the source
 reference; the new remote version has not yet been assigned.
