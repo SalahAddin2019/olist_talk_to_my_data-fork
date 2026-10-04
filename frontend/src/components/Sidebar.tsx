@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { Bot, MessageSquareText, Plus, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react';
 import type { ConversationSummary, Health } from '../types';
-import ThemeToggle from './ThemeToggle';
+import ThemeToggle, { type Theme } from './ThemeToggle';
 
 interface Props {
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
   health: Health | null;
   conversations: ConversationSummary[] | null;
   historyError: string;
@@ -94,6 +96,8 @@ export function MobileSidebar({
 }
 
 function SidebarContent({
+  theme,
+  onThemeChange,
   health,
   conversations,
   historyError,
@@ -111,7 +115,7 @@ function SidebarContent({
       <div className="flex items-center justify-between gap-2 px-5 pt-[max(1.5rem,env(safe-area-inset-top))] pb-5">
         <Brand />
         <div className="flex items-center gap-2">
-          <ThemeToggle />
+          <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
           {onClose && (
             <button
               type="button"

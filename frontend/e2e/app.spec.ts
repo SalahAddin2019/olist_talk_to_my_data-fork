@@ -197,6 +197,21 @@ test('theme can be pinned and persists across reloads', async ({ page }) => {
   await expect(page.getByRole('radio', { name: 'Dark theme' })).toBeChecked();
 });
 
+test('mobile and desktop theme controls share the current choice', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('dialog').getByRole('radio', { name: 'Dark theme' }).click();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Dark theme' })).toBeChecked();
+  await page.getByRole('radio', { name: 'System theme' }).click();
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await expect(page.getByRole('dialog').getByRole('radio', { name: 'System theme' })).toBeChecked();
+});
+
 test('numeric answers stay tables and Markdown images are omitted', async ({ page }) => {
   const answer =
     'Revenue by month:\n\n| Month | Revenue |\n| --- | --- |\n| 2018-01 | R$ 100.25 |\n| 2018-02 | R$ 200.50 |\n\n![Old image](/api/conversations/conv_1/files/cntr_1/cfile_1)';

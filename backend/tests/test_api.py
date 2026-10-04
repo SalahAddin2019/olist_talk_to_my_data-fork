@@ -12,6 +12,14 @@ from fastapi.testclient import TestClient
 QUESTION = {"question": "Total revenue?"}
 
 
+def assert_response_headers(response):
+    assert response.json()["request_id"] == response.headers["X-Request-ID"]
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["Referrer-Policy"] == "same-origin"
+    assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+
+
 class FakeAgent:
     """Keeps conversations per user, the way the Foundry metadata tags them."""
 
@@ -167,7 +175,9 @@ def test_production_requires_caller_authentication():
     config = settings(app_env="production", auth_mode="azure_container_apps")
     with client(agent, config) as api:
         assert api.get("/api/health").status_code == 200
-        assert api.post("/api/chat", json=QUESTION).status_code == 401
+        denied = api.post("/api/chat", json=QUESTION)
+        assert denied.status_code == 401
+        assert_response_headers(denied)
         assert api.get("/api/conversations").status_code == 401
         signed_in = {"x-ms-client-principal-id": "user-1"}
         assert api.post("/api/chat", json=QUESTION, headers=signed_in).status_code == 200
@@ -201,6 +211,7 @@ def test_request_bytes_are_bounded_while_streaming(chunked):
     with client(agent) as api:
         response = api.post("/api/chat", content=body)
     assert response.status_code == 413
+    assert_response_headers(response)
     assert agent.received is None
 
 

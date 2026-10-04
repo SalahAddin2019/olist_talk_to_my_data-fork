@@ -5,6 +5,7 @@ import Composer from './components/Composer';
 import EmptyState from './components/EmptyState';
 import Sidebar, { Brand, MobileSidebar, NewChatButton } from './components/Sidebar';
 import TurnView from './components/TurnView';
+import { useTheme } from './components/ThemeToggle';
 import { conversationFromUrl, toTurns } from './history';
 import type {
   Answer as ChatAnswer,
@@ -30,20 +31,23 @@ export default function App() {
   const [connectionError, setConnectionError] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ kind: 'load' } | { kind: 'answer'; id: string } | null>(
+    null,
+  );
   const [refresh, setRefresh] = useState(0);
   // The open conversation's ID; its messages are stored in Microsoft Foundry.
   const [conversationId, setConversationId] = useState<string | null>(conversationFromUrl);
   const [conversations, setConversations] = useState<ConversationSummary[] | null>(null);
   const [historyError, setHistoryError] = useState('');
-  const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
-  const openRef = useRef<AbortController | null>(null);
-  const busy = pendingId !== null;
+  const busy = pending?.kind === 'answer';
+  const pendingId = pending?.kind === 'answer' ? pending.id : null;
+  const loading = pending?.kind === 'load';
+  const theme = useTheme();
   const agent = health?.agent ?? 'the Foundry agent';
   const configured = health?.configured ?? false;
 
@@ -93,34 +97,31 @@ export default function App() {
 
   const load = useCallback(async (id: string | null) => {
     controllerRef.current?.abort();
-    openRef.current?.abort();
     controllerRef.current = null;
-    openRef.current = null;
-    setPendingId(null);
-    setLoading(false);
+    setPending(null);
     setConversationId(id);
     setTurns([]);
     setNotice('');
     if (!id) return;
     const controller = new AbortController();
-    openRef.current = controller;
-    setLoading(true);
+    controllerRef.current = controller;
+    setPending({ kind: 'load' });
     try {
       const detail = await request<ConversationDetail>(
         `/api/conversations/${encodeURIComponent(id)}`,
         { signal: controller.signal },
       );
-      if (openRef.current !== controller) return;
+      if (controller.signal.aborted || controllerRef.current !== controller) return;
       setTurns(toTurns(detail.messages));
     } catch (error) {
-      if (controller.signal.aborted || openRef.current !== controller) return;
+      if (controller.signal.aborted || controllerRef.current !== controller) return;
       setNotice(failure(error));
       setConversationId(null);
       history.replaceState(null, '', conversationUrl(null));
     } finally {
-      if (openRef.current === controller) {
-        openRef.current = null;
-        setLoading(false);
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+        setPending(null);
       }
     }
   }, []);
@@ -132,7 +133,6 @@ export default function App() {
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
-      openRef.current?.abort();
     };
   }, [load]);
 
@@ -146,15 +146,14 @@ export default function App() {
 
   async function ask(text: string, history: Turn[] = turns) {
     const question = text.trim();
-    if (!question || controllerRef.current || loading) return;
+    if (!question || controllerRef.current) return;
     const id = crypto.randomUUID();
     const controller = new AbortController();
     controllerRef.current = controller;
-    const started = performance.now();
     setTurns([...history, { id, question }]);
     setInput('');
     setNotice('');
-    setPendingId(id);
+    setPending({ kind: 'answer', id });
     const update = (patch: Partial<Turn>) =>
       setTurns((previous) =>
         previous.map((turn) => (turn.id === id ? { ...turn, ...patch } : turn)),
@@ -167,7 +166,7 @@ export default function App() {
         signal: controller.signal,
       });
       if (controller.signal.aborted || controllerRef.current !== controller) return;
-      update({ answer: result.answer, seconds: Math.round((performance.now() - started) / 1000) });
+      update({ answer: result.answer });
       if (!conversationId) {
         setConversationId(result.conversation_id);
         window.history.replaceState(null, '', conversationUrl(result.conversation_id));
@@ -179,7 +178,7 @@ export default function App() {
     } finally {
       if (controllerRef.current === controller) {
         controllerRef.current = null;
-        setPendingId(null);
+        setPending(null);
         const active = document.activeElement;
         if (!active || active === document.body) inputRef.current?.focus();
       }
@@ -211,6 +210,7 @@ export default function App() {
   }
 
   const sidebar = {
+    ...theme,
     health,
     conversations,
     historyError,
@@ -247,12 +247,6 @@ export default function App() {
         </header>
 
         <main className="relative flex flex-1 flex-col">
-          {!turns.length && !loading && (
-            <div
-              className="hero-glow pointer-events-none absolute inset-x-0 top-0 h-[480px]"
-              aria-hidden="true"
-            />
-          )}
           <div className="relative mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 sm:px-6">
             {connectionError && (
               <div

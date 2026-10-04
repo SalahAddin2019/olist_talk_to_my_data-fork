@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, Check, Copy, RotateCcw, Sparkles, Square } from 'lucide-react';
+import { AlertCircle, Check, Copy, LoaderCircle, RotateCcw, Sparkles, Square } from 'lucide-react';
 import Answer from '../Answer';
 import type { Turn } from '../types';
 
@@ -36,7 +36,7 @@ export default function TurnView({ turn, pending, canRetry, agent, onRetry }: Pr
             <>
               <span className="sr-only">{agent} answered: </span>
               <Answer text={turn.answer} />
-              <Actions text={turn.answer} seconds={turn.seconds} />
+              <Actions text={turn.answer} />
             </>
           )}
           {turn.stopped && (
@@ -62,32 +62,17 @@ export default function TurnView({ turn, pending, canRetry, agent, onRetry }: Pr
 }
 
 function Thinking({ agent }: { agent: string }) {
-  const [seconds, setSeconds] = useState(0);
-  useEffect(() => {
-    const started = Date.now();
-    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
-    return () => clearInterval(timer);
-  }, []);
   return (
-    <div className="thinking space-y-3 pt-1" role="status">
-      <p className="m-0 flex items-center gap-2 text-sm">
-        <span className="shimmer-text font-medium">Asking {agent}</span>
-        <span className="tabular-nums text-ink-3" aria-hidden="true">
-          {seconds}s
-        </span>
-      </p>
-      <div className="space-y-2" aria-hidden="true">
-        {['w-11/12', 'w-4/5', 'w-3/5'].map((width) => (
-          <div key={width} className={`h-3 ${width} shimmer-bar rounded-full`} />
-        ))}
-      </div>
+    <div className="thinking flex items-center gap-2 pt-1 text-sm text-ink-3" role="status">
+      <LoaderCircle aria-hidden="true" size={16} className="animate-spin" />
+      Asking {agent}
     </div>
   );
 }
 
 // Answers are kept in the Foundry conversation, so there is no regenerate: asking again
 // would add a second copy of the question to the stored history.
-function Actions({ text, seconds }: { text: string; seconds?: number }) {
+function Actions({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -111,9 +96,6 @@ function Actions({ text, seconds }: { text: string; seconds?: number }) {
         {copied ? <Check aria-hidden="true" size={13} /> : <Copy aria-hidden="true" size={13} />}
         {copied ? 'Copied' : 'Copy'}
       </button>
-      {seconds !== undefined && (
-        <span className="ml-auto text-xs tabular-nums text-ink-3">Answered in {seconds}s</span>
-      )}
       <span className="sr-only" aria-live="polite">
         {copied ? 'Answer copied to clipboard' : ''}
       </span>

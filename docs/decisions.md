@@ -156,3 +156,23 @@ Validation: 33 backend tests, the retained frontend history test, and 14 Edge
 browser tests passed. Ruff, frontend formatting, TypeScript/Vite build, local
 documentation links, and Git whitespace checks passed. Browser tests used API
 fixtures with an unconfigured backend; no live Foundry or database calls occurred.
+
+## 2026-10-04 — Reduce runtime and maintenance overhead
+
+Docker now includes only API sources and frontend build inputs; local outputs,
+tests, caches, and unrelated projects stay outside the build context. Runtime
+copies only `backend/app/`. The UI shares one conversation request controller and
+status, and one theme choice between desktop and mobile controls. Removed bundled
+fonts, elapsed-time tracking, shimmer placeholders, the decorative page glow, and
+the standalone table wrapper file. Ordinary accessible tables remain supported.
+
+Common response headers now wrap early authentication and body-limit errors.
+Provisioning and reset share audit setup and write an initial entry before any
+database command; reset records failed attempts. Warehouse checks use python-dotenv
+instead of a custom parser. Repository guidance now describes the actual app and
+test commands. Warehouse schemas, KNIME loads, and Foundry settings are unchanged.
+
+Validation: 37 Python tests (including fake-psql maintenance checks), one frontend
+unit test, and 15 Edge browser tests passed. Ruff, formatting, Bash syntax, and
+TypeScript/Vite build passed. Docker image execution was unavailable because the
+local engine was stopped. No live Foundry or database calls occurred.

@@ -99,8 +99,7 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 
     @app.middleware("http")
-    async def request_context(request: Request, call_next):
-        request.state.request_id = uuid4().hex
+    async def request_limits(request: Request, call_next):
         if settings.auth_mode == "azure_container_apps" and request.url.path != "/api/health":
             # Only safe behind ACA built-in auth that rejects unauthenticated requests;
             # ACA strips client-supplied identity headers. See docs/cloud.md.
@@ -115,6 +114,12 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
                     return error(request, 413, "Request too large.")
                 chunks.append(chunk)
             request._body = b"".join(chunks)
+        return await call_next(request)
+
+    # Registered last to wrap early authentication and body-limit responses too.
+    @app.middleware("http")
+    async def request_context(request: Request, call_next):
+        request.state.request_id = uuid4().hex
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-Content-Type-Options"] = "nosniff"

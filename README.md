@@ -75,6 +75,8 @@ npm run test:e2e
 Browser tests require the built app running on port 8000 (or `BASE_URL`) and
 Microsoft Edge. They use API fixtures; backend tests use mocked Foundry transport.
 Neither test suite establishes live warehouse or skill correctness.
+Maintenance regression tests use a fake `psql` and require Bash; they are skipped
+when Bash is unavailable. They never connect to a database.
 
 Optional audited sandbox checks use the `PG*` settings in `.env`:
 

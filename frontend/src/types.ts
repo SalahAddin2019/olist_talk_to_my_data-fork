@@ -24,5 +24,4 @@ export interface Turn {
   answer?: string;
   error?: string;
   stopped?: boolean;
-  seconds?: number;
 }

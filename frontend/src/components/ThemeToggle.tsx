@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Monitor, Moon, Sun } from 'lucide-react';
 
-type Theme = 'system' | 'light' | 'dark';
+export type Theme = 'system' | 'light' | 'dark';
 
 const options = [
   { value: 'system', label: 'System theme', icon: Monitor },
@@ -9,17 +9,11 @@ const options = [
   { value: 'dark', label: 'Dark theme', icon: Moon },
 ] as const;
 
-function stored(): Theme {
-  try {
-    const theme = localStorage.getItem('theme');
-    return theme === 'light' || theme === 'dark' ? theme : 'system';
-  } catch {
-    return 'system';
-  }
-}
-
-export default function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>(stored);
+export function useTheme() {
+  const [theme, setTheme] = useState<Theme>(() => {
+    const initial = document.documentElement.dataset.theme;
+    return initial === 'light' || initial === 'dark' ? initial : 'system';
+  });
 
   function choose(next: Theme) {
     setTheme(next);
@@ -34,6 +28,16 @@ export default function ThemeToggle() {
     }
   }
 
+  return { theme, onThemeChange: choose };
+}
+
+export default function ThemeToggle({
+  theme,
+  onThemeChange,
+}: {
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
+}) {
   return (
     <div
       role="radiogroup"
@@ -48,7 +52,7 @@ export default function ThemeToggle() {
           aria-checked={theme === value}
           aria-label={label}
           title={label}
-          onClick={() => choose(value)}
+          onClick={() => onThemeChange(value)}
           className="grid size-7 place-items-center rounded-md text-ink-3 transition-colors hover:text-ink aria-checked:bg-surface aria-checked:text-ink aria-checked:shadow-sm"
         >
           <Icon aria-hidden="true" size={14} />

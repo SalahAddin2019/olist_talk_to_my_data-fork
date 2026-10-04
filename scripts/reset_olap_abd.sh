@@ -8,6 +8,11 @@ set -a
 source "$ROOT/.env"
 set +a
 
+# shellcheck source=db_audit.sh
+source "$ROOT/scripts/db_audit.sh"
+log_row olist_olap_abd TRUNCATE "all OLAP tables, restart identities" started
+trap 'log_row olist_olap_abd TRUNCATE "all OLAP tables, restart identities" failed' ERR
+
 psql -d olist_olap_abd -v ON_ERROR_STOP=1 <<'SQL'
 TRUNCATE TABLE
   fact_order_item,
@@ -21,9 +26,6 @@ TRUNCATE TABLE
 RESTART IDENTITY;
 SQL
 
-LOG="$ROOT/logs/db_operations.md"
-n=$(awk -F'|' '/^\| [0-9]+ \|/{gsub(/ /, "", $2); n=$2} END{print n+1}' "$LOG")
-printf '| %s | %s | `olist_olap_abd` | TRUNCATE | all OLAP tables, restart identities | ok |\n' \
-  "$n" "$(date '+%Y-%m-%d %H:%M:%S %Z')" >> "$LOG"
+log_row olist_olap_abd TRUNCATE "all OLAP tables, restart identities" ok
 
 echo "OLAP sandbox reset complete"
