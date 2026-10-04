@@ -41,7 +41,7 @@ export default function TurnView({ turn, pending, canRetry, agent, onRetry }: Pr
           )}
           {turn.stopped && (
             <div className="flex flex-wrap items-center gap-3 text-sm text-ink-3">
-              <Square aria-hidden="true" size={13} /> Stopped before the agent answered.
+              <Square aria-hidden="true" size={13} /> Stopped waiting for the answer.
               {canRetry && <RetryButton onRetry={onRetry} label="Ask again" />}
             </div>
           )}

@@ -14,8 +14,6 @@ import type {
   Turn,
 } from './types';
 
-const TIMEOUT_MS = 180000;
-
 function failure(error: unknown): string {
   if (error instanceof DOMException && error.name === 'TimeoutError')
     return 'The Foundry agent took too long to answer. Try again.';
@@ -96,6 +94,10 @@ export default function App() {
   const load = useCallback(async (id: string | null) => {
     controllerRef.current?.abort();
     openRef.current?.abort();
+    controllerRef.current = null;
+    openRef.current = null;
+    setPendingId(null);
+    setLoading(false);
     setConversationId(id);
     setTurns([]);
     setNotice('');
@@ -108,9 +110,10 @@ export default function App() {
         `/api/conversations/${encodeURIComponent(id)}`,
         { signal: controller.signal },
       );
+      if (openRef.current !== controller) return;
       setTurns(toTurns(detail.messages));
     } catch (error) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || openRef.current !== controller) return;
       setNotice(failure(error));
       setConversationId(null);
       history.replaceState(null, '', conversationUrl(null));
@@ -161,8 +164,9 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, conversation_id: conversationId }),
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(TIMEOUT_MS)]),
+        signal: controller.signal,
       });
+      if (controller.signal.aborted || controllerRef.current !== controller) return;
       update({ answer: result.answer, seconds: Math.round((performance.now() - started) / 1000) });
       if (!conversationId) {
         setConversationId(result.conversation_id);
@@ -170,12 +174,15 @@ export default function App() {
         void loadConversations();
       }
     } catch (error) {
+      if (controllerRef.current !== controller) return;
       update(controller.signal.aborted ? { stopped: true } : { error: failure(error) });
     } finally {
-      controllerRef.current = null;
-      setPendingId(null);
-      const active = document.activeElement;
-      if (!active || active === document.body) inputRef.current?.focus();
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+        setPendingId(null);
+        const active = document.activeElement;
+        if (!active || active === document.body) inputRef.current?.focus();
+      }
     }
   }
 

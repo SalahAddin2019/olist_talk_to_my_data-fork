@@ -1,19 +1,7 @@
 import { useEffect, useRef } from 'react';
-import {
-  BarChart3,
-  Bot,
-  Database,
-  MessageSquareText,
-  Plus,
-  RefreshCw,
-  ShieldCheck,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { Bot, MessageSquareText, Plus, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react';
 import type { ConversationSummary, Health } from '../types';
 import ThemeToggle from './ThemeToggle';
-
-const tables = ['Orders', 'Products', 'Categories', 'Sellers', 'Customers', 'Geography', 'Dates'];
 
 interface Props {
   health: Health | null;
@@ -31,7 +19,7 @@ export function Brand() {
   return (
     <a href="/" className="flex items-center gap-2.5 rounded-lg" aria-label="Olist home">
       <span className="grid size-8 place-items-center rounded-[10px] bg-gradient-to-br from-accent to-accent-strong text-on-accent shadow-md shadow-accent/30">
-        <BarChart3 aria-hidden="true" size={17} />
+        <MessageSquareText aria-hidden="true" size={17} />
       </span>
       <strong className="text-xl font-semibold tracking-tight">
         olist<span className="text-accent">.</span>
@@ -196,17 +184,6 @@ function SidebarContent({
         ) : (
           <p className="px-2 text-sm text-ink-3">Your conversations will appear here.</p>
         )}
-
-        <h2 className="mt-7 flex items-center gap-1.5 px-2 pb-2 text-[0.6875rem] font-semibold tracking-wider text-ink-3 uppercase">
-          <Database aria-hidden="true" size={12} /> Warehouse
-        </h2>
-        <ul className="flex flex-wrap gap-1.5 px-2" aria-label="Warehouse subject areas">
-          {tables.map((table) => (
-            <li key={table} className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-ink-2">
-              {table}
-            </li>
-          ))}
-        </ul>
       </nav>
 
       <div className="m-4 mb-[max(1rem,env(safe-area-inset-bottom))] rounded-2xl border border-line bg-surface p-3 shadow-xs">
@@ -220,14 +197,14 @@ function SidebarContent({
             </strong>
             <span className="block text-xs text-ink-3">Microsoft Foundry</span>
           </div>
-          <span className="relative flex size-2.5" title={online ? 'Connected' : 'Not connected'}>
+          <span className="relative flex size-2.5" title={online ? 'Configured' : 'Not configured'}>
             {online && (
               <span className="absolute inline-flex size-full animate-ping rounded-full bg-good opacity-60" />
             )}
             <span
               className={`relative inline-flex size-2.5 rounded-full ${online ? 'bg-good' : 'bg-ink-3'}`}
             />
-            <span className="sr-only">{online ? 'Connected' : 'Not connected'}</span>
+            <span className="sr-only">{online ? 'Configured' : 'Not configured'}</span>
           </span>
         </div>
         <p className="mt-3 mb-0 flex items-center gap-1.5 border-t border-line pt-3 text-xs text-ink-3">

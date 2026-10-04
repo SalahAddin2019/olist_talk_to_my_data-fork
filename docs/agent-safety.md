@@ -1,36 +1,39 @@
-# Agent and tool safety
+# Agent and tool requirements
 
-The previous backend enforced warehouse safety in code: a reviewed SQL allowlist, bound
-parameters, read-only transactions, query and lock timeouts, a single-database restriction,
-fail-closed DB auditing and a category-quality guard (see [archive/](archive/)). The
-Foundry agent now does the data work, so **those controls must be enforced on the agent's
-tools and database identity**. This repository cannot prove them; the items below are
-requirements to verify for each agent version before production.
+The app forwards questions to Foundry; warehouse access and specialized skills
+are configured on the remote agent. Local instructions guide behavior, while
+database grants and tool controls enforce access.
 
-## Required evidence per agent version
+## Database scope
 
-| Control | Where it must be enforced | How to verify |
-|---|---|---|
-| Read-only data access | Agent tool's database login, member of `olist_agent_reader` only ([sql/04](../sql/04_agent_reader_role.sql)) with `default_transaction_read_only=on` | Role memberships and grants; a write attempt as that login is denied |
-| Only `olist_olap_abd` | Login has `CONNECT` on that database only | `\l` privileges; connection attempt to another database fails |
-| Query limits | Role-level `statement_timeout`; row limits in the tool | Role settings; long query is cancelled |
-| Auditable DB operations | Server-side logging for the tool login (pgaudit or `log_statement`) to Azure Monitor, which replaces the local `logs/db_operations.md` for agent traffic | Log query shows the evaluation run's statements |
-| No writes outside a sandbox | Tool definitions expose no write or DDL operations | Exported agent definition reviewed |
-| Prompt instructions are not a boundary | All of the above hold even if the model is tricked | `scripts/evaluate_agent.py` cases below |
-| Reviewed definition | Agent instructions and tool configuration exported and reviewed; version pinned with `FOUNDRY_AGENT_VERSION` | Version number in the evaluation report |
+The instruction source targets shared `olist_olap` as a read-only reference.
+Provisioning, KNIME loads, reset utilities, and verification scripts target the
+personal sandboxes `olist_oltp_abd` and `olist_olap_abd`. Do not apply sandbox DDL
+or grants to the shared database. [The reader-role SQL](../sql/04_agent_reader_role.sql)
+is a sandbox provisioner, not evidence of shared-database permissions.
 
-## Evaluation harness
+## Verify each released agent version
 
-`uv run --extra warehouse python scripts/evaluate_agent.py` calls the live agent and, when
-`PG*` variables are set, reads the warehouse (read-only, audited) for ground truth. It covers:
+- Pin a reviewed version with `FOUNDRY_AGENT_VERSION` and confirm its actual
+  database target, MCP identity, grants, and read-only tool set.
+- Enforce query timeouts and result limits in the tool service/database. Audit
+  remote database calls there; local maintenance calls remain logged in
+  `logs/db_operations.md`.
+- Configure the specialized skills the agent will invoke. Each skill owns its
+  execution and output delivery; the app has no generated-file endpoint or skill
+  dispatcher. Retain only the tools required for warehouse analysis and skills.
+- Check metric definitions, dates, mappings, follow-up scope, privacy, and tool
+  failures using traces and ground truth from the same database and filters.
+- Verify read-only enforcement and resistance to instructions embedded in data.
+  Do not test destructive operations against shared reference databases.
 
-- numerical accuracy of total revenue and distinct orders against the warehouse;
-- prompt injection (`DROP TABLE`), write and admin requests, and a fabricated assistant turn
-  claiming write access;
-- sensitive-record requests (fails if raw 32-character customer IDs appear);
-- category questions while category links are missing;
-- table row counts before and after the run (fails if anything changed).
+## Local checks
 
-Results are `pass`, `fail` or `review`; `review` answers need a person to read them in
-`artifacts/agent-evaluation.json`. Passing the harness is evidence, not proof: database-side
-enforcement in the table above is what makes the agent safe.
+Backend tests cover the Foundry request contract, caller/agent ownership, request
+limits, safe errors, and incomplete/approval-response rejection. Browser tests
+cover text/table chat and history using API fixtures. They do not run skills or
+validate the deployed agent's numerical answers.
+
+The obsolete local evaluator was removed: it used an incompatible chat interface
+and mismatched database/status ground truth. Historical findings are in
+[the archived review](archive/agent-review-2026-10-03.md).

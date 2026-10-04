@@ -91,7 +91,7 @@ stays stateless. The OpenRouter planner, SQL compiler and warehouse adapter were
 and data rules now live in the agent. Caller authentication, request byte and conversation
 limits and a concurrency gate stay in the backend. The warehouse check scripts and reader
 role are kept, the earlier design docs are archived under `docs/archive/`, and the agent's
-safety requirements and live evaluation are in `docs/agent-safety.md`.
+tool requirements are in `docs/agent-safety.md`.
 
 ## 2026-10-03 — Chat history lives in Foundry conversations
 
@@ -104,7 +104,7 @@ by metadata in the backend, because Foundry has no owner filter. The browser-sid
 budget (`MAX_CONVERSATION_CHARS`) was removed. Trade-off: listing scans the project's
 conversations (capped at 1,000), which suits one team, not a large multi-tenant deployment.
 
-## 2026-10-03 — Version 16 agent source and generated visualizations
+## 2026-10-03 — Version 16 agent source and generated visualizations (superseded)
 
 The user-supplied `olist-agent:16` export is the basis for the editable prompt-agent
 YAML. Keep one Markdown instruction source and embed it with the offline sync script;
@@ -126,3 +126,33 @@ bounded query correction, and export instructions. These prompt policies still r
 live evaluation and server-side enforcement where appropriate. The repo source does
 not automatically deploy or pin a new remote version; apply and review it in Foundry
 before updating `FOUNDRY_AGENT_VERSION`.
+
+
+## 2026-10-04 — Core chat and skill ownership
+
+The user assigned all visualization and export work to specialized skills and
+requested light agent instructions. The local prompt now keeps essential
+warehouse definitions and evidence rules, and delegates specialized work to
+available skills. Skill setup and execution belong to the configured Foundry
+agent; the app continues forwarding questions without a local skill router.
+
+Removed automatic table charts, generated-file citation rewriting, container
+downloads, image previews, download routes, and their dedicated tests. The app
+retains concise text and ordinary tables, follow-ups, history, and access controls.
+Incomplete answers and unsupported approval requests still fail clearly.
+
+Removed the incompatible live evaluator and alternate ADF exports. Kept the
+canonical sandbox SQL, KNIME-only transformations, audited maintenance scripts,
+source data, and reader-role provisioner. Duplicate schemas and reset snippets
+were removed after checking script and KNIME archive references. The warehouse
+model and database identities did not change; no database operations occurred.
+
+The local instruction source still targets the shared read-only `olist_olap`;
+all warehouse maintenance targets the personal `_abd` sandboxes. The two scopes
+must not be compared as numerical ground truth. Remote instructions, skill/tool
+configuration, and the reviewed version must be applied in Foundry separately.
+
+Validation: 33 backend tests, the retained frontend history test, and 14 Edge
+browser tests passed. Ruff, frontend formatting, TypeScript/Vite build, local
+documentation links, and Git whitespace checks passed. Browser tests used API
+fixtures with an unconfigured backend; no live Foundry or database calls occurred.

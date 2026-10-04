@@ -16,7 +16,6 @@
   --accent-strong: light-dark(oklch(46% 0.21 278), oklch(80% 0.12 278));
   --accent-soft: light-dark(oklch(95.5% 0.025 278), oklch(28% 0.06 278));
   --on-accent: light-dark(oklch(100% 0 0), oklch(18% 0.03 278));
-  --bar: light-dark(oklch(58% 0.19 278), oklch(68% 0.16 278));
   --good: light-dark(oklch(58% 0.14 160), oklch(74% 0.14 160));
   --warn-bg: light-dark(oklch(97% 0.03 75), oklch(26% 0.04 70));
   --warn-ink: light-dark(oklch(45% 0.1 60), oklch(85% 0.09 75));
@@ -45,7 +44,6 @@
   --color-accent-strong: var(--accent-strong);
   --color-accent-soft: var(--accent-soft);
   --color-on-accent: var(--on-accent);
-  --color-bar: var(--bar);
   --color-good: var(--good);
   --color-warn-bg: var(--warn-bg);
   --color-warn-ink: var(--warn-ink);

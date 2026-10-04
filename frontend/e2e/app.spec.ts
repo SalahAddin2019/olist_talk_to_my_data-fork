@@ -177,112 +177,6 @@ test.describe('on a phone', () => {
   });
 });
 
-test('numeric tables render as a chart with a table view', async ({ page }) => {
-  await page.route('**/api/chat', (route) =>
-    route.fulfill({
-      json: {
-        request_id: 'fixture',
-        conversation_id: 'conv_1',
-        answer:
-          '| State | Orders | Revenue |\n| --- | --- | --- |\n| SP | 41,746 | R$ 5,998,226.96 |\n| RJ | 12,852 | R$ 2,144,379.69 |\n| MG | 11,635 | R$ 1,872,257.26 |',
-      },
-    }),
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: /Which states have the most orders/ }).click();
-  const chart = page.getByRole('list', { name: 'Orders by State' });
-  await expect(chart.getByRole('listitem')).toHaveCount(3);
-  await page.getByRole('button', { name: 'Revenue' }).click();
-  await expect(page.getByRole('list', { name: 'Revenue by State' })).toContainText(
-    'R$ 5,998,226.96',
-  );
-  await page.getByRole('button', { name: 'Table' }).click();
-  await expect(page.getByRole('cell', { name: 'R$ 2,144,379.69' })).toBeVisible();
-});
-
-test('generated charts and downloads survive reopening a conversation', async ({ page }) => {
-  const file = '/api/conversations/conv_chart/files/cntr_1/cfile_1';
-  const csv = '/api/conversations/conv_chart/files/cntr_1/cfile_2';
-  const answer = `Monthly revenue, delivered orders, excluding freight.\n\n![Monthly revenue](${file})\n\n[Download PNG](${file}?download=true)\n\n[Download CSV](${csv}?download=true)`;
-  await page.route('**/api/chat', (route) =>
-    route.fulfill({ json: { request_id: 'fixture', conversation_id: 'conv_chart', answer } }),
-  );
-  await page.route('**/api/conversations/conv_chart', (route) =>
-    route.fulfill({
-      json: {
-        id: 'conv_chart',
-        messages: [
-          { id: 'm1', role: 'user', content: 'Chart monthly revenue' },
-          { id: 'm2', role: 'assistant', content: answer },
-        ],
-      },
-    }),
-  );
-  await page.route('**/api/conversations/conv_chart/files/**', (route) => {
-    const url = new URL(route.request().url());
-    const isCsv = url.pathname === csv;
-    return route.fulfill({
-      contentType: isCsv ? 'text/csv' : 'image/png',
-      headers: url.searchParams.has('download')
-        ? {
-            'Content-Disposition': `attachment; filename="${isCsv ? 'revenue.csv' : 'revenue.png'}"`,
-          }
-        : {},
-      body: isCsv
-        ? 'month,revenue\n2018-01,100.25\n'
-        : Buffer.from(
-            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZ9sAAAAASUVORK5CYII=',
-            'base64',
-          ),
-    });
-  });
-  await page.goto('/');
-  await page.getByRole('textbox').fill('Chart monthly revenue');
-  await page.getByRole('button', { name: 'Send question' }).click();
-  const image = page.getByRole('img', { name: 'Monthly revenue' });
-  await expect(image).toBeVisible();
-  await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1);
-  await expect(page.getByRole('link', { name: 'Download PNG' })).toHaveAttribute(
-    'href',
-    `${file}?download=true`,
-  );
-  await expect(page.getByRole('link', { name: 'Download CSV' })).toHaveAttribute(
-    'href',
-    `${csv}?download=true`,
-  );
-  for (const format of ['PNG', 'CSV']) {
-    const downloading = page.waitForEvent('download');
-    await page.getByRole('link', { name: `Download ${format}` }).click();
-    const download = await downloading;
-    expect(download.suggestedFilename()).toBe(`revenue.${format.toLowerCase()}`);
-    expect(await download.failure()).toBeNull();
-  }
-  await page.reload();
-  await expect(image).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Download CSV' })).toBeVisible();
-  await page.setViewportSize({ width: 390, height: 844 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-});
-
-test('expired charts show an actionable message', async ({ page }) => {
-  const file = '/api/conversations/conv_chart/files/cntr_1/cfile_1';
-  await page.route(`**${file}`, (route) => route.fulfill({ status: 404, body: 'Expired' }));
-  await page.route('**/api/chat', (route) =>
-    route.fulfill({
-      json: {
-        request_id: 'fixture',
-        conversation_id: 'conv_chart',
-        answer: `![Revenue](${file})`,
-      },
-    }),
-  );
-  await page.goto('/');
-  await page.getByRole('textbox').fill('Chart revenue');
-  await page.getByRole('button', { name: 'Send question' }).click();
-  await expect(page.getByRole('status')).toContainText('Ask for a fresh chart');
-  await expect(page.getByRole('img', { name: 'Revenue' })).toHaveCount(0);
-});
-
 test('a pending question can be stopped and asked again', async ({ page }) => {
   await page.route('**/api/chat', () => new Promise(() => {}));
   await page.goto('/');
@@ -290,7 +184,7 @@ test('a pending question can be stopped and asked again', async ({ page }) => {
   await page.getByRole('button', { name: 'Send question' }).click();
   await expect(page.locator('.thinking')).toBeVisible();
   await page.getByRole('button', { name: 'Stop waiting for the answer' }).click();
-  await expect(page.getByText('Stopped before the agent answered.')).toBeVisible();
+  await expect(page.getByText('Stopped waiting for the answer.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Ask again' })).toBeEnabled();
 });
 
@@ -301,4 +195,108 @@ test('theme can be pinned and persists across reloads', async ({ page }) => {
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.getByRole('radio', { name: 'Dark theme' })).toBeChecked();
+});
+
+test('numeric answers stay tables and Markdown images are omitted', async ({ page }) => {
+  const answer =
+    'Revenue by month:\n\n| Month | Revenue |\n| --- | --- |\n| 2018-01 | R$ 100.25 |\n| 2018-02 | R$ 200.50 |\n\n![Old image](/api/conversations/conv_1/files/cntr_1/cfile_1)';
+  const fileRequests: string[] = [];
+  await page.route('**/api/conversations/conv_1/files/**', (route) => {
+    fileRequests.push(route.request().url());
+    return route.fulfill({ status: 404 });
+  });
+  await page.route('**/api/chat', (route) =>
+    route.fulfill({ json: { request_id: 'fixture', conversation_id: 'conv_1', answer } }),
+  );
+  await page.route('**/api/conversations/conv_1', (route) =>
+    route.fulfill({
+      json: {
+        id: 'conv_1',
+        messages: [
+          { id: 'm1', role: 'user', content: 'Monthly revenue?' },
+          { id: 'm2', role: 'assistant', content: answer },
+        ],
+      },
+    }),
+  );
+  await page.goto('/');
+  await page.getByRole('textbox').fill('Monthly revenue?');
+  await page.getByRole('button', { name: 'Send question' }).click();
+  await expect(page.getByRole('table')).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'R$ 200.50' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'View', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('img', { name: 'Old image' })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('table')).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'R$ 100.25' })).toBeVisible();
+  expect(fileRequests).toEqual([]);
+});
+
+test('resetting while history loads leaves a usable new conversation', async ({ page }) => {
+  await page.route('**/api/conversations/conv_slow', () => new Promise(() => {}));
+  await page.goto('/?c=conv_slow');
+  await expect(page.getByText('Loading conversation…')).toBeVisible();
+  await page.getByRole('button', { name: 'New conversation' }).click();
+  await expect(page.getByRole('heading', { name: 'Talk to your data.' })).toBeVisible();
+  await page.route('**/api/chat', (route) =>
+    route.fulfill({
+      json: { request_id: 'fixture', conversation_id: 'conv_new', answer: '42 orders.' },
+    }),
+  );
+  await page.getByRole('textbox').fill('Order count?');
+  await page.getByRole('button', { name: 'Send question' }).click();
+  await expect(page.getByText('42 orders.')).toBeVisible();
+  await expect(page).toHaveURL(/\?c=conv_new$/);
+});
+
+test('browser navigation while waiting permits a new question', async ({ page }) => {
+  await page.route('**/api/conversations/conv_1', (route) =>
+    route.fulfill({
+      json: { id: 'conv_1', messages: [{ id: 'm1', role: 'user', content: 'Earlier question' }] },
+    }),
+  );
+  await page.route('**/api/chat', () => new Promise(() => {}));
+  await page.goto('/?c=conv_1');
+  await expect(page.getByText('Earlier question')).toBeVisible();
+  await page.getByRole('textbox').fill('Pending question');
+  await page.getByRole('button', { name: 'Send question' }).click();
+  await expect(page.locator('.thinking')).toBeVisible();
+  await page.evaluate(() => {
+    history.pushState(null, '', '/');
+    dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await expect(page.getByRole('heading', { name: 'Talk to your data.' })).toBeVisible();
+  await page.unroute('**/api/chat');
+  await page.route('**/api/chat', (route) =>
+    route.fulfill({
+      json: { request_id: 'fixture', conversation_id: 'conv_new', answer: 'New answer.' },
+    }),
+  );
+  await page.getByRole('textbox').fill('New question');
+  await page.getByRole('button', { name: 'Send question' }).click();
+  await expect(page.getByText('New answer.')).toBeVisible();
+  await expect(page).toHaveURL(/\?c=conv_new$/);
+});
+
+test('history deletion removes the open conversation', async ({ page }) => {
+  await page.route('**/api/conversations', (route) =>
+    route.fulfill({ json: [{ id: 'conv_1', title: 'Delete this', created_at: 1 }] }),
+  );
+  await page.route('**/api/conversations/conv_1', (route) =>
+    route.request().method() === 'DELETE'
+      ? route.fulfill({ status: 204 })
+      : route.fulfill({
+          json: {
+            id: 'conv_1',
+            messages: [{ id: 'm1', role: 'user', content: 'Earlier question' }],
+          },
+        }),
+  );
+  await page.goto('/?c=conv_1');
+  await expect(page.getByText('Earlier question')).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Delete conversation: Delete this' }).click();
+  await expect(page.getByRole('link', { name: 'Delete this' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Talk to your data.' })).toBeVisible();
+  await expect(page).not.toHaveURL(/\?c=/);
 });

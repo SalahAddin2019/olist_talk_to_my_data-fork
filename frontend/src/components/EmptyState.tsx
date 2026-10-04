@@ -14,7 +14,7 @@ const suggestions: { tag: string; question: string; icon: LucideIcon }[] = [
   { tag: 'Products', question: 'Which 5 categories generate the most revenue?', icon: Package },
   {
     tag: 'Trends',
-    question: 'Chart monthly revenue for 2018 and provide the underlying CSV.',
+    question: 'How did monthly revenue change in 2018?',
     icon: CalendarRange,
   },
   { tag: 'Customers', question: 'Which states have the most orders?', icon: MapPin },
@@ -44,7 +44,7 @@ export default function EmptyState({
       </h1>
       <p className="mt-4 mb-8 max-w-xl text-base sm:mb-10 text-pretty text-ink-2 sm:text-lg">
         Ask about revenue, products, sellers, customers and shipping costs in plain language.
-        Explore warehouse results with charts, period comparisons and downloadable data.
+        Compare periods and explore warehouse results through clear answers and tables.
       </p>
       <h2 className="mb-3 text-xs font-semibold tracking-wide text-ink-3 uppercase">Try asking</h2>
       <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

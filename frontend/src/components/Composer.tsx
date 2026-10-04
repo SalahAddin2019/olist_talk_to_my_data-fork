@@ -1,7 +1,7 @@
 import { useLayoutEffect, type RefObject } from 'react';
 import { ArrowUp, Square } from 'lucide-react';
 
-const MAX_LENGTH = 2000;
+const MAX_LENGTH = 4000;
 
 interface Props {
   inputRef: RefObject<HTMLTextAreaElement | null>;

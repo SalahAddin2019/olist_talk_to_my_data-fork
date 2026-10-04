@@ -1,3 +1,6 @@
+> Historical record before the core-chat cleanup. File locations, line numbers,
+> capabilities, and test counts below describe that earlier state.
+
 # Agent visualization enhancements — local validation
 
 Source: the user-supplied `olist-agent:16` export. The editable YAML keeps the
@@ -8,7 +11,7 @@ version and identity fields are omitted; duplicate export blocks are consolidate
 
 The YAML definition, sync script, configuration tests, and manual smoke-case file
 were subsequently removed. Only
-[agent_instructions.md](../microsoft_foundry/agent_instructions.md) remains in the
+[agent_instructions.md](../../microsoft_foundry/agent_instructions.md) remains in the
 Foundry folder. The results below record validation before that cleanup.
 
 ## Checks performed
@@ -51,7 +54,7 @@ are prompt policies that need service/database enforcement and live evaluation. 
 download ownership, citation binding, supported file types, concurrency, and the 10 MB
 limit are enforced in code. Generated Foundry files can expire.
 
-Copy [the agent instructions](../microsoft_foundry/agent_instructions.md) into the
+Copy [the agent instructions](../../microsoft_foundry/agent_instructions.md) into the
 Foundry portal's Instructions field, save a reviewed version, and pin that version
 with `FOUNDRY_AGENT_VERSION`. Version 16 remains the source
 reference; the new remote version has not yet been assigned.
