@@ -389,3 +389,21 @@ async def test_unfinished_or_approval_responses_are_not_business_answers(make_ag
         assert calls[-1][:2] == ("DELETE", "/conversations/conv_new")
     finally:
         await agent.close()
+
+
+def test_each_cited_chart_shows_with_its_own_download():
+    item = chart_message()
+    item["content"][0]["text"] = "Two charts."
+    item["content"][0]["annotations"].append(
+        {
+            **item["content"][0]["annotations"][0],
+            "file_id": "cfile_2",
+            "filename": "/mnt/data/orders.png",
+        }
+    )
+    answer = foundry.message_text(Message.model_validate(item), "conv_1")
+    first, second = (f"/api/conversations/conv_1/files/cntr_1/cfile_{n}" for n in (1, 2))
+    assert answer == (
+        f"Two charts.\n\n![revenue.png]({first})\n\n[Download PNG]({first}?download=true)"
+        f"\n\n![orders.png]({second})\n\n[Download PNG]({second}?download=true)"
+    )
