@@ -18,7 +18,7 @@ question to the Foundry agent. Chat history is stored only in Foundry conversati
   This makes ACA authentication (step 2) a requirement for privacy, not only for access.
 - Request IDs, no question text in logs or validation errors, non-root container, health check.
 
-## Deployment sequence (not yet provisioned)
+## Deployment sequence
 
 1. Build and test the image, push it to Azure Container Registry, and deploy it to ACA on
    port 8000 with HTTPS-only ingress.
@@ -39,6 +39,40 @@ question to the Foundry agent. Chat history is stored only in Foundry conversati
 7. Send stdout to Azure Monitor / Application Insights and alert on 429, 502–504 rates and
    latency. Use Foundry tracing and evaluations for agent quality.
 8. Prefer private networking between the container environment, Foundry and PostgreSQL.
+
+## Current deployment (demo, 2026-10-06)
+
+Deployed with `AUTH_MODE=shared_login` (see below), subscription "Azure subscription 1",
+East US, tenant b90e9d5f….
+
+| Resource | Name | Notes |
+| --- | --- | --- |
+| Container app | `olist-ttmd` in `rg-olist-ttmd` | HTTPS only, port 8000, 0–1 replicas, 0.5 CPU / 1 GiB |
+| Container Apps environment | `cae-olist-ttmd` in `rg-olist-ttmd` | Consumption |
+| Container registry | `olistttmdreg2141` in `rg-tgs-project` | Basic; image `olist-ttmd:<commit>` |
+| Foundry project | `ttmd-agent` / `proj-default` in `rg-tgs-project` | Agent `olist-agent` |
+
+- Public URL: https://olist-ttmd.gentleplant-2134e3a7.eastus.azurecontainerapps.io
+- The app's system-assigned identity has **AcrPull** on the registry and **Azure AI User**
+  (shown as "Foundry User") on the Foundry project, nothing broader. The registry lives in
+  `rg-tgs-project` because the deploying account can grant roles only there.
+- `SHARED_LOGIN_PASSWORD` and `SESSION_SECRET` are container app secrets referenced with
+  `secretref:`; their values are not recorded here.
+
+Update to a new commit from the repo root:
+
+```powershell
+$tag = git rev-parse --short HEAD
+az acr build -r olistttmdreg2141 -t olist-ttmd:$tag .
+az containerapp update -g rg-olist-ttmd -n olist-ttmd --image olistttmdreg2141.azurecr.io/olist-ttmd:$tag
+```
+
+Change the demo password without a rebuild:
+
+```powershell
+az containerapp secret set -g rg-olist-ttmd -n olist-ttmd --secrets shared-login-password=<new>
+az containerapp revision restart -g rg-olist-ttmd -n olist-ttmd --revision (az containerapp show -g rg-olist-ttmd -n olist-ttmd --query properties.latestRevisionName -o tsv)
+```
 
 ## Demo sign-in: one shared username and password
 
