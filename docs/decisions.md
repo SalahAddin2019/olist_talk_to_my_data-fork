@@ -184,7 +184,8 @@ This brings back the 2026-10-03 file handling that the 2026-10-04 cleanup remove
 the backend rewrites sandbox links that match a real `container_file_citation` into
 same-origin links, and serves the file only after checking the conversation's owner,
 agent, and that exact citation (PNG and CSV, 10 MB cap). Every cited PNG is shown
-inline below the answer, and every cited file gets a download link, whether or not
-the agent wrote its own image markdown. The browser only loads images from these
+inline below the answer with one download link under it, whether or not the agent
+wrote its own image markdown. The agent's own link to the same file is dropped (or
+reduced to its text mid-sentence) so each file has a single download link. The browser only loads images from these
 routes. Files stay in the Foundry container and may expire; the UI then says so.
 No agent instruction change is needed.

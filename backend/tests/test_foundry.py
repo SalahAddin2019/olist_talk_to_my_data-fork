@@ -291,13 +291,25 @@ async def test_chart_links_survive_chat_and_history(make_agent):
         await agent.close()
 
 
-def test_plain_file_links_become_an_inline_chart_and_a_download():
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        ("Download the chart: [revenue.png](sandbox:/mnt/data/revenue.png)", ""),
+        ("[Download the chart (PNG)](sandbox:/mnt/data/revenue.png)", ""),
+        (
+            "Revenue peaked in May; see [the chart](sandbox:/mnt/data/revenue.png) by month.",
+            "Revenue peaked in May; see the chart by month.\n\n",
+        ),
+    ],
+)
+def test_agent_file_links_give_way_to_one_inline_chart_and_download(text, kept):
     item = chart_message()
-    item["content"][0]["text"] = "Download the chart: [revenue.png](sandbox:/mnt/data/revenue.png)"
+    item["content"][0]["text"] = f"Revenue by month.\n\n{text}\n\nScope: delivered orders."
     answer = foundry.message_text(Message.model_validate(item), "conv_1")
     url = "/api/conversations/conv_1/files/cntr_1/cfile_1"
+    expected_body = "Revenue by month.\n\n" + kept + "Scope: delivered orders."
     assert answer == (
-        f"Download the chart: [revenue.png]({url}?download=true)\n\n![revenue.png]({url})"
+        f"{expected_body}\n\n![revenue.png]({url})\n\n[Download PNG]({url}?download=true)"
     )
 
 
