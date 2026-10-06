@@ -15,20 +15,12 @@ from pathlib import Path
 from uuid import uuid4
 
 import psycopg
+from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
 ROOT = Path(__file__).resolve().parents[1]
 DATABASE = "olist_olap_abd"
 AUDIT_LOG = ROOT / "logs/db_operations.md"
-
-
-def load_env():
-    env = ROOT / ".env"
-    if env.exists():
-        for line in env.read_text(encoding="utf-8").splitlines():
-            key, sep, value = line.partition("=")
-            if sep and not line.lstrip().startswith("#"):
-                os.environ.setdefault(key.strip(), value.strip())
 
 
 def audit(operation: str, sql: str, **details):
@@ -59,7 +51,7 @@ def serialize(row: dict) -> dict:
 
 class Warehouse:
     def __init__(self, timeout_ms: int = 30_000):
-        load_env()
+        load_dotenv(ROOT / ".env", override=False)
         os.environ.setdefault("PGDATABASE", DATABASE)
         if os.environ["PGDATABASE"] != DATABASE:
             raise SystemExit(f"These scripts only read {DATABASE}.")

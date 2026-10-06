@@ -11,7 +11,7 @@ COPY --from=uv /uv /uvx /bin/
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 UV_COMPILE_BYTECODE=1 PATH="/app/.venv/bin:$PATH"
 COPY pyproject.toml uv.lock ./
-COPY backend/ ./backend/
+COPY backend/app/ ./backend/app/
 RUN uv sync --frozen --no-dev && useradd --create-home --uid 10001 appuser
 COPY --from=frontend /build/dist ./frontend/dist/
 USER appuser

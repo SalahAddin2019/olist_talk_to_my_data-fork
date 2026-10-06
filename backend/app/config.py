@@ -20,8 +20,6 @@ class Settings(BaseSettings):
     auth_mode: Literal["local", "azure_container_apps"] = "local"
     allowed_hosts: list[str] = ["localhost", "127.0.0.1", "testserver"]
     max_request_bytes: int = Field(default=65_536, ge=4_096, le=1_048_576)
-    # Total characters across all messages; the UI trims history to fit.
-    max_conversation_chars: int = Field(default=24_000, ge=4_000, le=200_000)
     max_concurrent_requests: int = Field(default=4, ge=1, le=64)
 
     @model_validator(mode="after")

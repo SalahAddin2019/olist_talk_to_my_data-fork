@@ -4,22 +4,61 @@ import httpx
 import openai
 import pytest
 from app.config import Settings
+from app.foundry import AnswerIncomplete, ConversationNotFound
 from app.main import create_app
 from azure.core.exceptions import ClientAuthenticationError
 from fastapi.testclient import TestClient
 
-QUESTION = {"messages": [{"role": "user", "content": "Total revenue?"}]}
+QUESTION = {"question": "Total revenue?"}
+
+
+def assert_response_headers(response):
+    assert response.json()["request_id"] == response.headers["X-Request-ID"]
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["Referrer-Policy"] == "same-origin"
+    assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
 
 
 class FakeAgent:
+    """Keeps conversations per user, the way the Foundry metadata tags them."""
+
     def __init__(self, answer="R$ 13.6M", error=None):
         self.answer, self.error, self.received = answer, error, None
+        self.store: dict[str, tuple[str, list[dict]]] = {}
 
-    async def ask(self, messages):
-        self.received = messages
+    def owned(self, conversation_id, user):
+        if conversation_id not in self.store or self.store[conversation_id][0] != user:
+            raise ConversationNotFound
+        return self.store[conversation_id][1]
+
+    async def ask(self, question, conversation_id, user):
+        self.received = (question, conversation_id, user)
+        if conversation_id:
+            self.owned(conversation_id, user)
         if self.error:
             raise self.error
-        return self.answer
+        conversation_id = conversation_id or f"conv_{len(self.store) + 1}"
+        messages = self.store.setdefault(conversation_id, (user, []))[1]
+        messages += [
+            {"id": f"msg_{len(messages)}", "role": "user", "content": question},
+            {"id": f"msg_{len(messages) + 1}", "role": "assistant", "content": self.answer},
+        ]
+        return conversation_id, self.answer
+
+    async def conversations(self, user, limit):
+        return [
+            {"id": key, "title": messages[0]["content"], "created_at": 0}
+            for key, (owner, messages) in reversed(self.store.items())
+            if owner == user
+        ][:limit]
+
+    async def messages(self, conversation_id, user):
+        return self.owned(conversation_id, user)
+
+    async def delete(self, conversation_id, user):
+        self.owned(conversation_id, user)
+        del self.store[conversation_id]
 
     async def close(self):
         pass
@@ -43,33 +82,45 @@ def status_error(cls, status):
     return cls("private detail", response=httpx.Response(status, request=request), body=None)
 
 
-def test_chat_forwards_history_and_returns_answer():
+def test_chat_starts_and_continues_a_foundry_conversation():
     agent = FakeAgent()
-    history = {
-        "messages": [
-            {"role": "user", "content": "Total revenue?"},
-            {"role": "assistant", "content": "R$ 13.6M"},
-            {"role": "user", "content": "Only 2018"},
-        ]
-    }
     with client(agent) as api:
-        response = api.post("/api/chat", json=history)
-    assert response.status_code == 200
-    assert response.json() == {
-        "request_id": response.headers["X-Request-ID"],
-        "answer": "R$ 13.6M",
-    }
-    assert agent.received == history["messages"]
+        first = api.post("/api/chat", json={"question": "  Total revenue? "})
+        assert first.status_code == 200
+        conversation_id = first.json()["conversation_id"]
+        assert first.json() == {
+            "request_id": first.headers["X-Request-ID"],
+            "conversation_id": conversation_id,
+            "answer": "R$ 13.6M",
+        }
+        assert agent.received == ("Total revenue?", None, "local")
+        follow_up = {"question": "Only 2018", "conversation_id": conversation_id}
+        assert api.post("/api/chat", json=follow_up).json()["conversation_id"] == conversation_id
+        assert agent.received == ("Only 2018", conversation_id, "local")
+
+
+def test_history_is_read_back_from_foundry_and_can_be_deleted():
+    agent = FakeAgent()
+    with client(agent) as api:
+        conversation_id = api.post("/api/chat", json=QUESTION).json()["conversation_id"]
+        assert api.get("/api/conversations").json() == [
+            {"id": conversation_id, "title": "Total revenue?", "created_at": 0}
+        ]
+        detail = api.get(f"/api/conversations/{conversation_id}").json()
+        assert [message["role"] for message in detail["messages"]] == ["user", "assistant"]
+        assert api.delete(f"/api/conversations/{conversation_id}").status_code == 204
+        assert api.get(f"/api/conversations/{conversation_id}").status_code == 404
+        assert api.get("/api/conversations").json() == []
 
 
 @pytest.mark.parametrize(
     "body",
     [
-        {"messages": []},
-        {"messages": [{"role": "assistant", "content": "hi"}]},
-        {"messages": [{"role": "user", "content": "   "}]},
-        {"messages": [{"role": "system", "content": "DROP TABLE"}]},
-        {"messages": [{"role": "user", "content": "hi"}] * 21},
+        {},
+        {"question": "   "},
+        {"question": "x" * 4001},
+        {"question": "hi", "conversation_id": "../DROP TABLE"},
+        {"messages": [{"role": "user", "content": "DROP TABLE"}]},
         {**QUESTION, "extra": "DROP TABLE"},
     ],
 )
@@ -124,48 +175,61 @@ def test_production_requires_caller_authentication():
     config = settings(app_env="production", auth_mode="azure_container_apps")
     with client(agent, config) as api:
         assert api.get("/api/health").status_code == 200
-        assert api.post("/api/chat", json=QUESTION).status_code == 401
+        denied = api.post("/api/chat", json=QUESTION)
+        assert denied.status_code == 401
+        assert_response_headers(denied)
+        assert api.get("/api/conversations").status_code == 401
         signed_in = {"x-ms-client-principal-id": "user-1"}
         assert api.post("/api/chat", json=QUESTION, headers=signed_in).status_code == 200
-    assert agent.received is not None
+    assert agent.received == ("Total revenue?", None, "user-1")
+
+
+def test_conversations_are_private_to_their_user():
+    agent = FakeAgent()
+    config = settings(app_env="production", auth_mode="azure_container_apps")
+    alice = {"x-ms-client-principal-id": "alice"}
+    bob = {"x-ms-client-principal-id": "bob"}
+    with client(agent, config) as api:
+        started = api.post("/api/chat", json=QUESTION, headers=alice)
+        conversation_id = started.json()["conversation_id"]
+        assert api.get("/api/conversations", headers=bob).json() == []
+        url = f"/api/conversations/{conversation_id}"
+        assert api.get(url, headers=bob).status_code == 404
+        assert api.delete(url, headers=bob).status_code == 404
+        follow_up = {"question": "Only 2018", "conversation_id": conversation_id}
+        response = api.post("/api/chat", json=follow_up, headers=bob)
+        assert response.status_code == 404
+        assert "Total revenue" not in response.text
+        assert api.get(url, headers=alice).status_code == 200
 
 
 @pytest.mark.parametrize("chunked", [False, True])
 def test_request_bytes_are_bounded_while_streaming(chunked):
     agent = FakeAgent()
-    padded = b'{"messages": [{"role": "user", "content": "hi"}]}' + b" " * 70_000
+    padded = b'{"question": "hi"}' + b" " * 70_000
     body = iter([padded[i : i + 4096] for i in range(0, len(padded), 4096)]) if chunked else padded
     with client(agent) as api:
         response = api.post("/api/chat", content=body)
     assert response.status_code == 413
+    assert_response_headers(response)
     assert agent.received is None
 
 
-def test_conversation_budget_is_enforced():
-    agent = FakeAgent()
-    long_history = {
-        "messages": [
-            {"role": "user", "content": "x" * 3000},
-            {"role": "assistant", "content": "y" * 3000},
-            {"role": "user", "content": "next"},
-        ]
-    }
-    with client(agent, settings(max_conversation_chars=5000)) as api:
-        response = api.post("/api/chat", json=long_history)
-    assert response.status_code == 413
-    assert agent.received is None
+def test_invalid_conversation_id_in_path_is_rejected():
+    with client(FakeAgent()) as api:
+        assert api.get("/api/conversations/not-a-conversation").status_code == 422
 
 
 def test_concurrent_calls_beyond_the_limit_are_rejected():
     class SlowAgent(FakeAgent):
         active = peak = 0
 
-        async def ask(self, messages):
+        async def ask(self, question, conversation_id, user):
             SlowAgent.active += 1
             SlowAgent.peak = max(SlowAgent.peak, SlowAgent.active)
             await asyncio.sleep(0.2)
             SlowAgent.active -= 1
-            return "ok"
+            return "conv_1", "ok"
 
     async def burst():
         app = create_app(settings(max_concurrent_requests=2), SlowAgent())
@@ -176,6 +240,24 @@ def test_concurrent_calls_beyond_the_limit_are_rejected():
                     *(api.post("/api/chat", json=QUESTION) for _ in range(8))
                 )
 
-    statuses = sorted(response.status_code for response in asyncio.run(burst()))
+    responses = asyncio.run(burst())
+    statuses = sorted(response.status_code for response in responses)
     assert statuses == [200, 200] + [429] * 6
+    assert all(
+        response.headers["retry-after"] == "3"
+        for response in responses
+        if response.status_code == 429
+    )
     assert SlowAgent.peak == 2
+
+
+def test_incomplete_answers_are_actionable():
+    with client(FakeAgent(error=AnswerIncomplete())) as api:
+        response = api.post("/api/chat", json=QUESTION)
+    assert response.status_code == 502
+    assert response.json()["request_id"] == response.headers["X-Request-ID"]
+
+
+def test_generated_file_endpoint_is_removed():
+    with client(FakeAgent()) as api:
+        assert api.get("/api/conversations/conv_1/files/cntr_1/cfile_1").status_code == 404

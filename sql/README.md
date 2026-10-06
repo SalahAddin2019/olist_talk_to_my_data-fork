@@ -18,4 +18,6 @@ Reset only the OLAP rows before rerunning the KNIME workflows:
 ./scripts/reset_olap_abd.sh
 ```
 
-Legacy shared-targeting DDL/scripts: `archive/sql_pre_abd/`, `archive/scripts_pre_abd/`.
+Populate OLAP only through the numbered KNIME workflows. The reset script logs
+its sandbox operation in `logs/db_operations.md`. `04_agent_reader_role.sql`
+provisions sandbox reader permissions; it must not be applied to shared databases.
