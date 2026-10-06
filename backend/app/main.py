@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 from typing import Annotated
@@ -15,6 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from app import session
 from app.artifacts import FILE_ID, MEDIA_TYPES
 from app.config import ROOT, Settings
 from app.foundry import (
@@ -31,6 +33,9 @@ logger = logging.getLogger("olist.api")
 MAX_QUESTION_CHARS = 4000
 CONVERSATION_ID = r"^conv_[A-Za-z0-9_-]{1,200}$"
 ConversationId = Annotated[str, Path(pattern=CONVERSATION_ID)]
+# Reachable before sign-in: the health probe, the session check and the sign-in itself.
+OPEN_PATHS = frozenset({"/api/health", "/api/session", "/api/login", "/api/logout"})
+Credential = Annotated[str, StringConstraints(min_length=1, max_length=200)]
 
 
 class ChatRequest(BaseModel):
@@ -41,6 +46,18 @@ class ChatRequest(BaseModel):
     ]
     # Omitted for the first question; Foundry then starts a conversation.
     conversation_id: Annotated[str | None, Field(pattern=CONVERSATION_ID)] = None
+
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: Credential
+    password: Credential
+
+
+class SessionState(BaseModel):
+    mode: str
+    authenticated: bool
 
 
 class ChatResponse(BaseModel):
@@ -83,10 +100,18 @@ ERRORS: list[tuple[tuple[type[Exception], ...], int, str]] = [
 def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
     settings = settings or Settings()
     gate = asyncio.Semaphore(settings.max_concurrent_requests)
+    shared_login = settings.auth_mode == "shared_login"
+    # Without an explicit secret every process signs with its own, so a restart or a
+    # second replica signs everyone out. Fine for a demo; set SESSION_SECRET otherwise.
+    session_secret = settings.session_secret or secrets.token_hex(32)
+    throttle = session.Throttle()
+    session_lifetime_s = int(settings.session_hours * 3600)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         logging.basicConfig(level=logging.INFO, format="%(message)s")
+        if shared_login and not settings.session_secret:
+            logger.warning("session_secret_generated sign_ins_end_on_restart=true")
         app.state.agent = agent or (FoundryAgent(settings) if settings.configured else None)
         try:
             yield
@@ -109,6 +134,10 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
             # Only safe behind ACA built-in auth that rejects unauthenticated requests;
             # ACA strips client-supplied identity headers. See docs/cloud.md.
             if not request.headers.get("x-ms-client-principal-id"):
+                return error(request, 401, "Sign in to continue.")
+        if shared_login and request.url.path.startswith("/api/"):
+            # The UI itself stays public, because it serves the sign-in form.
+            if request.url.path not in OPEN_PATHS and visitor(request) is None:
                 return error(request, 401, "Sign in to continue.")
         if request.method == "POST":
             # Bounded streaming read, including requests without Content-Length.
@@ -146,10 +175,17 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
             headers=headers,
         )
 
+    def visitor(request: Request) -> str | None:
+        return session.visitor(session_secret, request.cookies.get(session.COOKIE))
+
     def caller(request: Request) -> str:
         # Conversations are tagged with this ID in Foundry and only shown to the same caller.
         if settings.auth_mode == "azure_container_apps":
             return request.headers["x-ms-client-principal-id"]
+        if shared_login:
+            # One shared credential cannot identify anyone, so each browser that signs
+            # in gets its own ID and therefore its own history.
+            return visitor(request) or "anonymous"
         return "local"
 
     def foundry(request: Request) -> FoundryAgent:
@@ -214,6 +250,59 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
             "configured": settings.configured,
             "agent": settings.foundry_agent_name or None,
         }
+
+    @app.get("/api/session", response_model=SessionState)
+    async def session_state(request: Request):
+        authenticated = (
+            visitor(request) is not None
+            if shared_login
+            else bool(request.headers.get("x-ms-client-principal-id"))
+            if settings.auth_mode == "azure_container_apps"
+            else True
+        )
+        return SessionState(mode=settings.auth_mode, authenticated=authenticated)
+
+    def client_address(request: Request) -> str:
+        # Spoofable, so this only slows down guessing; the cool-off is per replica.
+        forwarded = request.headers.get("x-forwarded-for", "")
+        return forwarded.split(",")[0].strip() or (request.client.host if request.client else "-")
+
+    @app.post("/api/login", status_code=204)
+    async def login(body: LoginRequest, request: Request):
+        if not shared_login:
+            raise HTTPException(404, "Sign-in is not enabled on this deployment.")
+        address = client_address(request)
+        if not throttle.allowed(address):
+            raise HTTPException(
+                429,
+                "Too many sign-in attempts. Wait a few minutes and try again.",
+                headers={"Retry-After": "60"},
+            )
+        # Both comparisons always run, so a wrong username is not faster than a wrong password.
+        name_ok = secrets.compare_digest(body.username.strip(), settings.shared_login_username)
+        password_ok = secrets.compare_digest(body.password, settings.shared_login_password)
+        if not (name_ok and password_ok):
+            throttle.failed(address)
+            logger.warning("login_failed request_id=%s", request.state.request_id)
+            raise HTTPException(401, "Incorrect username or password.")
+        throttle.succeeded(address)
+        response = Response(status_code=204)
+        response.set_cookie(
+            session.COOKIE,
+            session.issue(session_secret, session_lifetime_s),
+            max_age=session_lifetime_s,
+            httponly=True,
+            secure=settings.app_env == "production",
+            samesite="lax",
+            path="/",
+        )
+        return response
+
+    @app.post("/api/logout", status_code=204)
+    async def logout():
+        response = Response(status_code=204)
+        response.delete_cookie(session.COOKIE, path="/")
+        return response
 
     @app.post("/api/chat", response_model=ChatResponse)
     async def chat(body: ChatRequest, request: Request):

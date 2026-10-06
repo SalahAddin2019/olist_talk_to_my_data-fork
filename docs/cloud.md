@@ -39,3 +39,30 @@ question to the Foundry agent. Chat history is stored only in Foundry conversati
 7. Send stdout to Azure Monitor / Application Insights and alert on 429, 502–504 rates and
    latency. Use Foundry tracing and evaluations for agent quality.
 8. Prefer private networking between the container environment, Foundry and PostgreSQL.
+
+## Demo sign-in: one shared username and password
+
+For a presentation where the audience should open a link and start asking questions,
+`AUTH_MODE=shared_login` replaces Entra sign-in with one credential pair read out to the
+room. Everything still runs in Azure; only the sign-in step changes.
+
+- Set `APP_ENV=production`, `AUTH_MODE=shared_login`, `SHARED_LOGIN_USERNAME`,
+  `SHARED_LOGIN_PASSWORD` (at least 8 characters), `SESSION_SECRET` and exact
+  `ALLOWED_HOSTS` in the container app's settings. Keep the credentials out of the
+  repository; store the password as a container app secret.
+- The shared credentials cannot identify anyone, so each browser that signs in is given a
+  random visitor ID in a signed, HTTP-only session cookie (`SESSION_HOURS`, default 12).
+  Conversations are tagged with that ID, so visitors do not see each other's history.
+  History does not follow a visitor to another browser or device, and clearing cookies
+  starts over.
+- Without `SESSION_SECRET` each process signs with its own generated secret, so a restart
+  or a second replica signs everyone out. Set it, and keep `--max-replicas 1` for a demo.
+- Failed sign-ins are counted per client address and cool off after 10 attempts in five
+  minutes. The counter is per replica, like the concurrency gate.
+- A public link plus a spoken password is not a privacy boundary: a token-per-minute limit
+  on the model deployment and an Azure budget alert protect the Foundry spend, and the
+  password should be changed after the demo (a settings update, no rebuild).
+- Switching to real customer sign-in later is a settings change: set
+  `AUTH_MODE=azure_container_apps`, enable ACA built-in auth (step 2 above), and add
+  Microsoft Entra External ID for accounts outside the tenant. The code path for ACA is
+  unchanged.
