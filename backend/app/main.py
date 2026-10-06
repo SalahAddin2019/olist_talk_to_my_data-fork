@@ -1,7 +1,9 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import PurePosixPath
 from typing import Annotated
+from urllib.parse import quote
 from uuid import uuid4
 
 import openai
@@ -9,13 +11,16 @@ from azure.core.exceptions import ClientAuthenticationError
 from fastapi import FastAPI, HTTPException, Path, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from app.artifacts import FILE_ID, MEDIA_TYPES
 from app.config import ROOT, Settings
 from app.foundry import (
     AnswerIncomplete,
+    ArtifactNotFound,
+    ArtifactTooLarge,
     ConversationNotFound,
     FoundryAgent,
 )
@@ -167,6 +172,16 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
     async def conversation_not_found(request: Request, exc: ConversationNotFound):
         return error(request, 404, "Conversation not found. It may have been deleted.")
 
+    @app.exception_handler(ArtifactNotFound)
+    async def artifact_not_found(request: Request, exc: ArtifactNotFound):
+        return error(request, 404, "File unavailable. It may have expired; ask for a fresh export.")
+
+    @app.exception_handler(ArtifactTooLarge)
+    async def artifact_too_large(request: Request, exc: ArtifactTooLarge):
+        return error(
+            request, 413, "This file exceeds the 10 MB download limit. Request fewer rows."
+        )
+
     @app.exception_handler(AnswerIncomplete)
     async def answer_incomplete(request: Request, exc: AnswerIncomplete):
         return error(
@@ -231,6 +246,34 @@ def create_app(settings: Settings | None = None, agent=None) -> FastAPI:
     @app.delete("/api/conversations/{conversation_id}", status_code=204)
     async def delete_conversation(conversation_id: ConversationId, request: Request):
         await foundry(request).delete(conversation_id, caller(request))
+
+    @app.get("/api/conversations/{conversation_id}/files/{container_id}/{file_id}")
+    async def download_artifact(
+        conversation_id: ConversationId,
+        container_id: Annotated[str, Path(pattern=FILE_ID)],
+        file_id: Annotated[str, Path(pattern=FILE_ID)],
+        request: Request,
+        download: bool = False,
+    ):
+        if gate.locked():
+            raise HTTPException(
+                429,
+                "The assistant is busy. Please try again shortly.",
+                headers={"Retry-After": "3"},
+            )
+        async with gate:
+            content, name = await foundry(request).artifact(
+                conversation_id, container_id, file_id, caller(request)
+            )
+        suffix = PurePosixPath(name).suffix.lower()
+        disposition = "attachment" if download or suffix != ".png" else "inline"
+        return Response(
+            content=content,
+            media_type=MEDIA_TYPES[suffix],
+            headers={
+                "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(name, safe='')}"
+            },
+        )
 
     # One same-origin container in production, Vite proxy during local development.
     frontend = ROOT / "frontend/dist"
